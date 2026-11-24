@@ -8,7 +8,8 @@
 - Use **Begin SAR** and **Cancel SAR** from a helicopter's **Orders → Search & Rescue** menu.
 - Helicopters claim separate friendly rafts, prioritize rafts with fewer survivors, and check they have enough fuel to make the trip.
 - Helicopters descend, hover for pickup, and move on to another raft if they have room and fuel.
-- Helicopters return to where they launched from (ship, airfield, etc), unload survivors, and relaunch automatically if reachable rafts remain. Helicopters with enough fuel skip the usual servicing and launch prep. Helicopters that need fuel refuel before relaunching.
+- Helicopters return to where they launched from (ship, airfield, etc), unload survivors, and relaunch automatically if reachable rafts remain. 
+- Helicopters with enough fuel skip the usual servicing and launch prep.
 
 ## Roadmap
 
