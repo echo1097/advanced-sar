@@ -1,0 +1,6 @@
+.tools/
+.venv/
+.vs/
+**/bin/
+**/obj/
+/dist/
