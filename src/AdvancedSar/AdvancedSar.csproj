@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-    <Version>0.2.1</Version>
+    <Version>0.3.1</Version>
     <GameDir Condition="'$(GameDir)' == ''">$(MSBuildProgramFiles32)/Steam/steamapps/common/Sea Power</GameDir>
     <ManagedDir>$(GameDir)/Sea Power_Data/Managed</ManagedDir>
     <BepInExCoreDir Condition="'$(BepInExCoreDir)' == '' And Exists('$(GameDir)/BepInEx/core/BepInEx.dll')">$(GameDir)/BepInEx/core</BepInExCoreDir>
@@ -21,6 +21,10 @@
     </Reference>
     <Reference Include="Noesis.NoesisGUI">
       <HintPath>$(ManagedDir)/Noesis.NoesisGUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ParadoxNotion">
+      <HintPath>$(ManagedDir)/ParadoxNotion.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Seapower-Scripts">
@@ -53,8 +57,8 @@
            Text="BepInEx.dll was not found in '$(BepInExCoreDir)'. Set up Keel or pass -p:BepInExCoreDir with an extracted BepInEx 5 core folder." />
     <Error Condition="!Exists('$(BepInExCoreDir)/0Harmony.dll')"
            Text="0Harmony.dll was not found in the BepInEx core folder '$(BepInExCoreDir)'." />
-    <Error Condition="!Exists('$(ManagedDir)/Noesis.NoesisGUI.dll') Or !Exists('$(ManagedDir)/Seapower-Scripts.dll') Or !Exists('$(ManagedDir)/UniRx.dll')"
-           Text="Sea Power's map and UI assemblies were not found in '$(ManagedDir)'." />
+    <Error Condition="!Exists('$(ManagedDir)/Noesis.NoesisGUI.dll') Or !Exists('$(ManagedDir)/ParadoxNotion.dll') Or !Exists('$(ManagedDir)/Seapower-Scripts.dll') Or !Exists('$(ManagedDir)/UniRx.dll')"
+           Text="Sea Power's gameplay and UI assemblies were not found in '$(ManagedDir)'." />
   </Target>
 
   <Target Name="StageMod" AfterTargets="Build">
