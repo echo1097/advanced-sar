@@ -25,3 +25,5 @@ Sea Power mod loader by Kanalratte and AGM-114. [R.A.T.S. Keel on Steam Workshop
 Uicons by [Flaticon](https://www.flaticon.com/uicons).
 
 Logo background courtesy of [U.S. Army](https://www.army.mil/article/162132/sarex_in_the_arabian_gulf).
+
+U.S. Navy SH-60B Seahawk photo via [NARA on GetArchive](https://nara.getarchive.net/media/aerial-stern-view-of-a-us-navy-usn-sh-60b-seahawk-helicopter-antisubmarine-38f96b).
