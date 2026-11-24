@@ -18,6 +18,7 @@ namespace AdvancedSar
         private const double routeCheckIntervalSeconds = 30;
 
         private static readonly List<Assignment> assignments = new List<Assignment>();
+        private const string abortReport = "Rodger, aborting SAR.";
         private static double lastRouteCheck;
 
         private static void Postfix(ObjectBaseViewModel __instance, TrulyObservableCollection<ContextMenuItem> __result)
@@ -67,6 +68,17 @@ namespace AdvancedSar
             }
 
             startSarFlight(helicopter, target, null);
+            reportStatus(helicopter, "Starting SAR.");
+        }
+
+        private static void reportStatus(ObjectBase unit, string message)
+        {
+            Globals._mainGameViewModel?.RaiseAlert(unit, "${Name}: " + message);
+        }
+
+        private static string survivorCount(int count)
+        {
+            return count == 1 ? "1 survivor" : $"{count} survivors";
         }
 
         private static void startSarFlight(Helicopter helicopter, ObjectBase target, HashSet<ObjectBase> skippedRafts,
@@ -98,6 +110,7 @@ namespace AdvancedSar
             var assignment = new Assignment(helicopter, target, waypoint, approachHeading);
             assignment.skippedRafts = skippedRafts;
             assignments.Add(assignment);
+            assignment.watchPickups();
             sarWaypoints.Add(waypoint, assignment);
             if (afterTakeoff)
             {
@@ -126,6 +139,7 @@ namespace AdvancedSar
                 {
                     removeRecovery(recoveryIndex, true);
                     helicopter.ShowOrderFeedback("SAR canceled", 5f);
+                    reportStatus(helicopter, "Canceling SAR.");
                     return;
                 }
 
@@ -134,6 +148,7 @@ namespace AdvancedSar
             }
 
             endSar(index, "SAR canceled");
+            reportStatus(helicopter, "Canceling SAR.");
         }
 
         internal static void updateRoutes(float realTime)
@@ -256,6 +271,7 @@ namespace AdvancedSar
         private static void releaseAssignment(int index)
         {
             var assignment = assignments[index];
+            assignment.pickupSubscription.Dispose();
             restorePickupPermission(assignment);
             if (assignment.waypoint != null)
                 sarWaypoints.Remove(assignment.waypoint);
@@ -271,12 +287,19 @@ namespace AdvancedSar
                     continue;
 
                 var helicopter = assignment.helicopter;
+                bool routeInterrupted = canReceiveSarOrders(helicopter) && helicopter._userRoot != null &&
+                    (!hasNoOrder(helicopter) || helicopter.GetWaypoint(1) != null);
                 if (assignment.savedAltitude is float altitude && canReceiveSarOrders(helicopter) &&
                     helicopter.GetWaypoint(1) == null && hasNoOrder(helicopter) &&
                     helicopter.DesiredAltitude.Value == (float)assignment.destination._height)
                     helicopter.DesiredAltitude.Value = altitude;
 
                 releaseAssignment(index);
+                if (routeInterrupted)
+                {
+                    reportStatus(helicopter, abortReport);
+                    reportReturningSurvivors(helicopter);
+                }
             }
         }
 

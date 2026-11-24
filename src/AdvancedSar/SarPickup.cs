@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using HarmonyLib;
 using SeaPower;
+using UniRx;
 
 namespace AdvancedSar
 {
@@ -54,7 +55,8 @@ namespace AdvancedSar
             internal bool retried;
             internal bool directApproach;
             internal bool? originalPickupPermission;
-            internal int lastOnBoard;
+            internal IDisposable pickupSubscription;
+            private int lastOnBoard;
             internal double stageStarted;
             internal double lastPickupProgress;
             internal double bestApproachDistance;
@@ -72,6 +74,23 @@ namespace AdvancedSar
                 this.waypoint = waypoint;
                 this.approachHeading = approachHeading;
                 destination = waypoint.WaypointPosition;
+            }
+
+            internal void watchPickups()
+            {
+                var passengers = helicopter._obp.CurrentTransportedOnBoard;
+                lastOnBoard = passengers.Value;
+                pickupSubscription = passengers.Subscribe(onPassengersChanged);
+            }
+
+            private void onPassengersChanged(int onBoard)
+            {
+                int rescued = onBoard - lastOnBoard;
+                lastOnBoard = onBoard;
+                if (rescued <= 0 || stage != SarStage.Hover || !helicopter.RaftPickUpAllowed.Value)
+                    return;
+
+                lastPickupProgress = GameTime.missionElapsedTime;
             }
         }
 
@@ -126,7 +145,6 @@ namespace AdvancedSar
             assignment.risky = SeaPower.Environment.Instance.SeaState >= 9;
             assignment.lastPosition = position;
             assignment.stageStarted = missionTime;
-            assignment.lastOnBoard = helicopter._obp.CurrentTransportedOnBoard.Value;
             assignment.lastPickupProgress = missionTime;
             assignment.bestApproachDistance = distance;
             assignment.attemptDeadline = missionTime + pickupSeconds +
@@ -297,11 +315,6 @@ namespace AdvancedSar
                 }
             }
 
-            int onBoard = helicopter._obp.CurrentTransportedOnBoard.Value;
-            if (onBoard > assignment.lastOnBoard)
-                assignment.lastPickupProgress = missionTime;
-            assignment.lastOnBoard = onBoard;
-
             bool timedOut = missionTime >= assignment.attemptDeadline ||
                 (assignment.stage != SarStage.Transit && missionTime - assignment.stageStarted >= pickupSeconds);
             double progressLimit = assignment.stage == SarStage.Transit ? 2 * stallSeconds : stallSeconds;
@@ -315,11 +328,12 @@ namespace AdvancedSar
             var home = helicopter.getHomeBase();
             endSar(index, null);
             const string message = "Too risky, unable to conduct SAR";
-            Globals._mainGameViewModel?.RaiseAlert(helicopter, "${Name}: " + message);
+            reportStatus(helicopter, message);
             helicopter.ShowOrderFeedback(message, 5f);
 
             if (isAvailableHome(home) && helicopter.CurrentOrder.Value?.OrderType != Order.Type.ReturnToBase)
                 helicopter.setOrder(Order.Type.ReturnToBase, home, displayOrderText: false);
+            reportReturningSurvivors(helicopter);
         }
 
         private static void retryOrSkip(int index, double missionTime)
@@ -343,6 +357,7 @@ namespace AdvancedSar
             }
 
             skipRaft(assignment);
+            reportStatus(helicopter, "Unable to complete pickup. Skipping this raft.");
             helicopter.ShowOrderFeedback("SAR pickup stalled. Skipping this raft", 5f);
             continueSar(index);
         }

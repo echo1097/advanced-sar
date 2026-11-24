@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- When another order or waypoint takes over from SAR, the helicopter reports “Rodger, aborting SAR.” in the status terminal.
+- Fixed helicopters circling a rescue waypoint while trying to reach exactly 20 feet. They now check their distance from the raft separately from pickup height and speed.
+- In sea states 9+ (due to pick up from helicopters being impossible as far as I can tell), the helicopter makes one low approach, reports “Too risky, unable to conduct SAR”, and returns to base.
+- Helicopters report accepted SAR orders, cancellations, and skipped rafts in the status terminal. Once a helicopter starts RTB, it reports the total survivors aboard from all rafts. After landing, the home ship or airbase reports how many survivors it received.
+
 ## 0.5.3
 
 - When a SAR relaunch finishes, replace Sea Power's automatic launch waypoints with a route toward the next reachable raft. Preserve player-issued orders and new or moved waypoints.

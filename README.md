@@ -13,6 +13,7 @@
 
 ## Roadmap
 
+- Let helicopters take turns at a raft when one helicopter has too few free seats for everyone.
 - Order search and rescue from the ships menu so it automatically launches helicopters and preforms SAR. 
 - Tweaks and improvements for preformance and stability
 - Improving pathing and logic

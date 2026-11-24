@@ -97,6 +97,21 @@ namespace AdvancedSar
                 home._obp._flightDeck != null && !home._obp._flightDeck.DisabledByMission;
         }
 
+        private static int survivorsAboard(Helicopter helicopter)
+        {
+            return Math.Max(0, helicopter._obp.CurrentTransportedOnBoard.Value - helicopter.EmbarkedGroundPersonnel);
+        }
+
+        private static void reportReturningSurvivors(Helicopter helicopter)
+        {
+            if (helicopter.CurrentOrder.Value?.OrderType != Order.Type.ReturnToBase)
+                return;
+
+            int count = survivorsAboard(helicopter);
+            if (count > 0)
+                reportStatus(helicopter, $"RTB with {survivorCount(count)}.");
+        }
+
         private static void returnHome(int index, string reason)
         {
             var assignment = assignments[index];
@@ -116,7 +131,9 @@ namespace AdvancedSar
                 deck = home._obp._flightDeck,
                 skippedRafts = assignment.skippedRafts
             });
-            helicopter.setOrder(Order.Type.ReturnToBase, home, true);
+            if (helicopter.CurrentOrder.Value?.OrderType != Order.Type.ReturnToBase)
+                helicopter.setOrder(Order.Type.ReturnToBase, home, displayOrderText: false);
+            reportReturningSurvivors(helicopter);
             helicopter.ShowOrderFeedback(reason + ". Returning to base", 5f);
         }
 
@@ -139,9 +156,14 @@ namespace AdvancedSar
                 {
                     var helicopter = recovery.helicopter;
                     var order = helicopter != null ? helicopter.CurrentOrder.Value : null;
-                    if (helicopter == null || helicopter.IsDestroyed || helicopter.IsDespawned ||
-                        (order != null && order.OrderType != Order.Type.None && order.OrderType != Order.Type.ReturnToBase))
+                    if (helicopter == null || helicopter.IsDestroyed || helicopter.IsDespawned)
                         removeRecovery(index, false);
+                    else if (order != null && order.OrderType != Order.Type.None && order.OrderType != Order.Type.ReturnToBase)
+                    {
+                        removeRecovery(index, false);
+                        if (canReceiveSarOrders(helicopter))
+                            reportStatus(helicopter, abortReport);
+                    }
                     continue;
                 }
 
@@ -287,8 +309,14 @@ namespace AdvancedSar
                 return;
 
             removeRecovery(index, false);
-            if (!canReceiveSarOrders(helicopter) || !hasNoOrder(helicopter) || hasOtherWaypoints(recovery))
+            if (!canReceiveSarOrders(helicopter))
                 return;
+
+            if (!hasNoOrder(helicopter) || hasOtherWaypoints(recovery))
+            {
+                reportStatus(helicopter, abortReport);
+                return;
+            }
 
             var target = findReachableSarTarget(helicopter, out _, recovery.skippedRafts);
             if (target != null)
@@ -351,7 +379,7 @@ namespace AdvancedSar
                 if (recovery == null)
                     return;
 
-                recovery.survivors = Math.Max(0, helicopter._obp.CurrentTransportedOnBoard.Value - helicopter.EmbarkedGroundPersonnel);
+                recovery.survivors = survivorsAboard(helicopter);
                 recovery.loadoutName = helicopter._obp._loadoutVariant;
                 recovery.callsignIndex = helicopter._obp._callsignIndex;
                 recovery.fullRange = helicopter._hp._maxRangeInKm;
@@ -377,6 +405,8 @@ namespace AdvancedSar
                 {
                     var onBoard = helicopter._obp.CurrentTransportedOnBoard;
                     onBoard.Value = Math.Max(0, onBoard.Value - __state.survivors);
+                    string helicopterName = System.Security.SecurityElement.Escape(helicopter.Name.Value);
+                    reportStatus(__state.home, $"Received {survivorCount(__state.survivors)} from {helicopterName}.");
                     __state.home.ShowOrderFeedback($"SAR dropped off {__state.survivors} survivors", 5f);
                 }
 
