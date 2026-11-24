@@ -9,6 +9,9 @@ namespace AdvancedSar
         private const float pickupHeightFeet = 20;
         private const float maxPickupSpeedKnots = 13;
         private const float altitudeToleranceFeet = 5;
+        private const float departureClimbFeet = 150;
+        private const float departureWaypointNmi = 1f;
+        private const double departureClearanceNmi = 0.6;
         private const float stagingDistanceNmi = 0.7f;
         private const double descentDistanceNmi = 1.2;
         private const double stagingToleranceNmi = 0.2;
@@ -30,10 +33,10 @@ namespace AdvancedSar
         private enum SarStage
         {
             Transit,
+            Departure,
             Descend,
             Pickup,
-            Hover,
-            Climb
+            Hover
         }
 
         private sealed class Assignment
@@ -43,11 +46,12 @@ namespace AdvancedSar
             internal HashSet<ObjectBase> skippedRafts;
             internal ObjectBase raft;
             internal GeoPosition destination;
+            internal GeoPosition departureOrigin;
             internal float approachHeading;
             internal SarStage stage;
             internal float? savedAltitude;
-            internal string finishMessage;
             internal bool retried;
+            internal bool directApproach;
             internal bool? originalPickupPermission;
             internal int lastOnBoard;
             internal double stageStarted;
@@ -108,6 +112,14 @@ namespace AdvancedSar
             return raftPosition.GeoOffsetByDistanceOnHeading(stagingDistanceNmi, approachHeading);
         }
 
+        private static GeoPosition getDeparturePoint(GeoPosition origin, GeoPosition raftPosition)
+        {
+            if (GeoPosition.HaversineDistanceNmi(origin, raftPosition) >= departureWaypointNmi)
+                return raftPosition;
+
+            return origin.GeoOffsetByDistanceOnHeading(departureWaypointNmi, origin.HeadingToPosition(raftPosition));
+        }
+
         private static bool isAtPickupAltitude(Helicopter helicopter)
         {
             return helicopter.AltitudeOverSurface <= Utils.heightInFeetToUnity(pickupHeightFeet + altitudeToleranceFeet);
@@ -160,9 +172,9 @@ namespace AdvancedSar
                 assignment.lastPickupProgress = missionTime;
             }
 
-            if (assignment.stage == SarStage.Climb)
+            if (assignment.stage == SarStage.Departure)
             {
-                updateClimb(index, missionTime);
+                updateDeparture(index, missionTime, activeRafts);
                 return;
             }
 
@@ -175,7 +187,8 @@ namespace AdvancedSar
             var raftPosition = assignment.raft.getGeoPosition();
             if (assignment.stage == SarStage.Descend)
             {
-                var stagingPoint = getStagingPoint(raftPosition, assignment.approachHeading);
+                var stagingPoint = assignment.directApproach ? raftPosition :
+                    getStagingPoint(raftPosition, assignment.approachHeading);
                 if (isAtPickupAltitude(helicopter) &&
                     GeoPosition.HaversineDistanceNmi(helicopter.getGeoPosition(), stagingPoint) <= stagingToleranceNmi)
                     beginFinalApproach(assignment, raftPosition, missionTime);
@@ -235,6 +248,7 @@ namespace AdvancedSar
             if (!assignment.retried && findReachableSarTarget(helicopter, out _, retryRaft: assignment.raft) != null)
             {
                 assignment.retried = true;
+                assignment.directApproach = false;
                 var raftPosition = assignment.raft.getGeoPosition();
                 assignment.approachHeading = raftPosition.HeadingToPosition(helicopter.getGeoPosition());
                 beginDescent(assignment, getStagingPoint(raftPosition, assignment.approachHeading), missionTime);
@@ -246,32 +260,24 @@ namespace AdvancedSar
             continueSar(index);
         }
 
-        private static void finishSar(int index, string feedback)
+        private static void updateDeparture(int index, double missionTime, List<ObjectBase> activeRafts)
         {
             var assignment = assignments[index];
-            if (!(assignment.savedAltitude is float altitude))
+            var position = assignment.helicopter.getGeoPosition();
+            if (GeoPosition.HaversineDistanceNmi(assignment.departureOrigin, position) >= departureClearanceNmi &&
+                position._height >= assignment.destination._height - Utils.heightInFeetToUnity(altitudeToleranceFeet))
             {
-                endSar(index, feedback);
+                if (hasActiveRaft(assignment, activeRafts) &&
+                    findReachableSarTarget(assignment.helicopter, out _, retryRaft: assignment.raft) != null)
+                    routeToRaft(assignment, assignment.raft, missionTime, justClearedShip: true);
+                else
+                    continueSar(index, justClearedShip: true);
+
                 return;
             }
 
-            assignment.raft = null;
-            suspendPickup(assignment);
-            setStage(assignment, SarStage.Climb);
-            assignment.stageStarted = GameTime.missionElapsedTime;
-            assignment.finishMessage = feedback;
-            removeSarWaypoint(assignment);
-            assignment.helicopter.DesiredAltitude.Value = altitude;
-        }
-
-        private static void updateClimb(int index, double missionTime)
-        {
-            var assignment = assignments[index];
-            var helicopter = assignment.helicopter;
-            if (helicopter.getGeoPosition()._height >= assignment.savedAltitude.Value - Utils.heightInFeetToUnity(altitudeToleranceFeet))
-                endSar(index, assignment.finishMessage);
-            else if (missionTime - assignment.stageStarted >= pickupSeconds)
-                endSar(index, "SAR ended. Unable to reach previous altitude");
+            if (missionTime - assignment.stageStarted >= pickupSeconds)
+                endSar(index, "SAR ended. Helicopter did not clear the departure route");
         }
 
         private static void restorePickupPermission(Assignment assignment)

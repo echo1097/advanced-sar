@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.3
+
+- When a SAR relaunch finishes, replace Sea Power's automatic launch waypoints with a route toward the next reachable raft. Preserve player-issued orders and new or moved waypoints.
+
+## 0.5.2
+
+- The first waypoint after a SAR relaunch now points toward the selected raft. If the raft is close to the ship, the waypoint extends past it on the same heading to give the helicopter more room to depart.
+
+## 0.5.1
+
+- Relaunched SAR helicopters fly straight clear of the ship before turning toward the next raft.
+- Helicopters now hand off to Sea Power's Return To Base order immediately when the rescue run ends. Raft-to-raft travel stays at 20 feet.
+
+## 0.5.0
+
+- SAR helicopters use Sea Power's normal return and landing orders when full, low on fuel, or out of reachable rafts. A confirmed recovery unloads rescued survivors without awarding rescue credit again.
+- Healthy helicopters with enough fuel can skip the recovery cooldown and launch prep while still using the deck queue. They take off with their remaining fuel. Helicopters that need fuel use the normal turnaround.
+- After takeoff, the recovered helicopter resumes SAR if it can reach an eligible raft. It stays aboard when no raft fits its range on a full tank.
+
 ## 0.4.2
 
 - Helicopters with room and enough fuel fly straight to the next eligible raft at 20 feet.

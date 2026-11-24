@@ -1,10 +1,18 @@
 # Advanced SAR - Search & Rescue Quality of Life
 
-![Advanced SAR logo](assets/splash-logo.png)
+![Advanced SAR logo](assets/splash-logo-small.png)
 
-A search and rescue quality-of-life mod for Sea Power.
+## Features
+
+- Toggle color-coded markers on the tactical map for life boats/rafts, see how many survivors are aboard each one.
+- Use **Begin SAR** and **Cancel SAR** from a helicopter's **Orders → Search & Rescue** menu.
+- Helicopters claim separate friendly rafts, prioritize rafts with fewer survivors, and check they have enough fuel to make the trip.
+- Helicopters descend, hover for pickup, and move on to another raft if they have room and fuel.
+- Helicopters return to base, unload survivors, and relaunch automatically if reachable rafts remain. Helicopters with enough fuel skip the usual servicing and launch prep. Helicopters that need fuel refuel before relaunching.
 
 ## Credits
+
+Sea Power mod loader by Kanalratte and AGM-114. [R.A.T.S. Keel on Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3835527459)
 
 Uicons by [Flaticon](https://www.flaticon.com/uicons).
 
