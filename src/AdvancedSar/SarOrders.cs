@@ -16,7 +16,6 @@ namespace AdvancedSar
         private const double secondsPerHour = 60 * 60;
         private const double kilometersPerNauticalMile = 1.852;
         private const double routeCheckIntervalSeconds = 30;
-        private const double waypointUpdateDistanceNmi = 0.1;
 
         private static readonly List<Assignment> assignments = new List<Assignment>();
         private static double lastRouteCheck;
@@ -104,12 +103,12 @@ namespace AdvancedSar
             {
                 assignment.departureOrigin = origin;
                 assignment.stageStarted = GameTime.missionElapsedTime;
-                setStage(assignment, SarStage.Departure);
+                assignment.stage = SarStage.Departure;
                 helicopter.DesiredAltitude.Value = (float)altitude;
             }
             else
             {
-                updateTransit(assignment, GameTime.missionElapsedTime);
+                startApproach(assignment, GameTime.missionElapsedTime);
             }
         }
 
@@ -144,7 +143,7 @@ namespace AdvancedSar
 
             double missionTime = GameTime.missionElapsedTime;
             bool checkRoutes = missionTime < lastRouteCheck || missionTime - lastRouteCheck >= routeCheckIntervalSeconds;
-            bool checkPickup = activePickups > 0 && isPickupCheckDue(missionTime, realTime);
+            bool checkPickup = isPickupCheckDue(missionTime, realTime);
             if (!checkRoutes && !checkPickup)
                 return;
 
@@ -165,22 +164,8 @@ namespace AdvancedSar
                     continue;
                 }
 
-                if (assignment.stage != SarStage.Transit)
-                {
-                    if (checkPickup)
-                        updatePickup(index, missionTime, activeRafts);
-                    continue;
-                }
-
-                if (!checkRoutes)
-                    continue;
-
-                if (!hasRoom(assignment.helicopter))
-                    returnHome(index, "SAR complete. Survivor capacity reached");
-                else if (hasActiveRaft(assignment, activeRafts))
-                    updateTransit(assignment, missionTime);
-                else
-                    continueSar(index);
+                if (checkPickup)
+                    updatePickup(index, missionTime, activeRafts);
             }
         }
 
@@ -196,33 +181,6 @@ namespace AdvancedSar
 
             for (int index = recoveries.Count - 1; index >= 0; index--)
                 removeRecovery(index, true);
-        }
-
-        private static void updateTransit(Assignment assignment, double missionTime)
-        {
-            var raftPosition = assignment.raft.getGeoPosition();
-            bool flyingLow = assignment.savedAltitude.HasValue;
-            var approachPoint = flyingLow || assignment.directApproach ? raftPosition :
-                getStagingPoint(raftPosition, assignment.approachHeading);
-            var helicopterPosition = assignment.helicopter.getGeoPosition();
-            double distanceToRaft = GeoPosition.HaversineDistanceNmi(helicopterPosition, raftPosition);
-            if ((flyingLow && distanceToRaft <= descentDistanceNmi) ||
-                (distanceToRaft <= hoverEntryDistanceNmi && isAtPickupAltitude(assignment.helicopter)))
-            {
-                assignment.savedAltitude ??= (float)helicopterPosition._height;
-                beginFinalApproach(assignment, raftPosition, missionTime);
-                return;
-            }
-
-            if (!flyingLow && GeoPosition.HaversineDistanceNmi(helicopterPosition, approachPoint) <= descentDistanceNmi)
-            {
-                assignment.savedAltitude = (float)helicopterPosition._height;
-                beginDescent(assignment, approachPoint, missionTime);
-                return;
-            }
-
-            if (GeoPosition.HaversineDistanceNmi(assignment.destination, approachPoint) >= waypointUpdateDistanceNmi)
-                moveSarWaypoint(assignment, approachPoint, assignment.waypoint.WaypointPosition._height);
         }
 
         private static void continueSar(int index, bool justClearedShip = false)
@@ -252,21 +210,13 @@ namespace AdvancedSar
             var helicopter = assignment.helicopter;
             assignment.raft = target;
             assignment.retried = false;
-            setStage(assignment, SarStage.Transit);
             var raftPosition = target.getGeoPosition();
             var origin = helicopter.getGeoPosition();
             assignment.approachHeading = raftPosition.HeadingToPosition(origin);
             assignment.directApproach = justClearedShip &&
                 GeoPosition.HaversineDistanceNmi(origin, raftPosition) <= stagingDistanceNmi + stagingToleranceNmi;
-            bool flyingLow = assignment.savedAltitude.HasValue;
-            var approachPoint = flyingLow || assignment.directApproach ? raftPosition :
-                getStagingPoint(raftPosition, assignment.approachHeading);
-            double altitude = flyingLow ? Utils.heightInFeetToUnity(pickupHeightFeet) : helicopter.DesiredAltitude.Value;
-            moveSarWaypoint(assignment, approachPoint, altitude);
-            if (flyingLow)
-                suspendPickup(assignment);
-
-            updateTransit(assignment, missionTime);
+            assignment.directApproach |= assignment.savedAltitude.HasValue;
+            startApproach(assignment, missionTime);
         }
 
         private static void moveSarWaypoint(Assignment assignment, GeoPosition position, double altitude)
@@ -307,7 +257,6 @@ namespace AdvancedSar
         {
             var assignment = assignments[index];
             restorePickupPermission(assignment);
-            setStage(assignment, SarStage.Transit);
             if (assignment.waypoint != null)
                 sarWaypoints.Remove(assignment.waypoint);
             assignments.RemoveAt(index);

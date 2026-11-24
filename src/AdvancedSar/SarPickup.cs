@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using HarmonyLib;
 using SeaPower;
@@ -17,7 +18,6 @@ namespace AdvancedSar
         private const double stagingToleranceNmi = 0.2;
         private const double pickupDistanceNmi = 0.15;
         private const double hoverEntryDistanceNmi = 0.12;
-        private const double hoverExitDistanceNmi = 0.14;
         private const double pickupDriftNmi = 0.01;
         private const double approachProgressNmi = 0.02;
         private const double pickupCheckIntervalSeconds = 3;
@@ -26,7 +26,8 @@ namespace AdvancedSar
 
         private static readonly Dictionary<GoToWaypointTask, Assignment> sarWaypoints =
             new Dictionary<GoToWaypointTask, Assignment>();
-        private static int activePickups;
+        private const double settleSeconds = 15;
+        private const float maxPickupHeightFeet = 55;
         private static double lastPickupCheck;
         private static float lastRealPickupCheck;
 
@@ -57,7 +58,12 @@ namespace AdvancedSar
             internal double stageStarted;
             internal double lastPickupProgress;
             internal double bestApproachDistance;
-            internal bool reachedPickupPosition;
+            internal GeoPosition lastPosition;
+            internal double attemptDeadline;
+            internal double hoverStarted;
+            internal float lastHoverHeight;
+            internal double heightStableSince;
+            internal bool risky;
 
             internal Assignment(Helicopter helicopter, ObjectBase raft, GoToWaypointTask waypoint, float approachHeading)
             {
@@ -97,16 +103,6 @@ namespace AdvancedSar
             return true;
         }
 
-        private static void setStage(Assignment assignment, SarStage stage)
-        {
-            if (assignment.stage == SarStage.Transit && stage != SarStage.Transit)
-                activePickups++;
-            else if (assignment.stage != SarStage.Transit && stage == SarStage.Transit)
-                activePickups--;
-
-            assignment.stage = stage;
-        }
-
         private static GeoPosition getStagingPoint(GeoPosition raftPosition, float approachHeading)
         {
             return raftPosition.GeoOffsetByDistanceOnHeading(stagingDistanceNmi, approachHeading);
@@ -120,39 +116,108 @@ namespace AdvancedSar
             return origin.GeoOffsetByDistanceOnHeading(departureWaypointNmi, origin.HeadingToPosition(raftPosition));
         }
 
-        private static bool isAtPickupAltitude(Helicopter helicopter)
-        {
-            return helicopter.AltitudeOverSurface <= Utils.heightInFeetToUnity(pickupHeightFeet + altitudeToleranceFeet);
-        }
-
-        private static void beginDescent(Assignment assignment, GeoPosition stagingPoint, double missionTime)
-        {
-            setStage(assignment, SarStage.Descend);
-            assignment.stageStarted = missionTime;
-            suspendPickup(assignment);
-            moveSarWaypoint(assignment, stagingPoint, Utils.heightInFeetToUnity(pickupHeightFeet));
-        }
-
-        private static void beginFinalApproach(Assignment assignment, GeoPosition raftPosition, double missionTime)
+        private static void startApproach(Assignment assignment, double missionTime)
         {
             var helicopter = assignment.helicopter;
-            setStage(assignment, SarStage.Pickup);
+            var position = helicopter.getGeoPosition();
+            var raft = assignment.raft.getGeoPosition();
+            var target = assignment.directApproach ? raft : getStagingPoint(raft, assignment.approachHeading);
+            double distance = GeoPosition.HaversineDistanceNmi(position, target);
+            assignment.risky = SeaPower.Environment.Instance.SeaState >= 9;
+            assignment.lastPosition = position;
             assignment.stageStarted = missionTime;
-            assignment.lastPickupProgress = missionTime;
-            assignment.bestApproachDistance = GeoPosition.HaversineDistanceNmi(helicopter.getGeoPosition(), raftPosition);
-            assignment.reachedPickupPosition = false;
             assignment.lastOnBoard = helicopter._obp.CurrentTransportedOnBoard.Value;
+            assignment.lastPickupProgress = missionTime;
+            assignment.bestApproachDistance = distance;
+            assignment.attemptDeadline = missionTime + pickupSeconds +
+                3 * secondsPerHour * distance / Math.Max(1, helicopter._hp._maxSpeedSeaLevel);
+            assignment.stage = SarStage.Transit;
             suspendPickup(assignment);
-            moveSarWaypoint(assignment, raftPosition, Utils.heightInFeetToUnity(pickupHeightFeet));
-
-            if (assignment.bestApproachDistance <= hoverEntryDistanceNmi && isAtPickupAltitude(helicopter))
-                enterHover(assignment);
+            moveSarWaypoint(assignment, target, helicopter.DesiredAltitude.Value);
+            updateApproach(assignment, position, raft, missionTime);
         }
 
-        private static void enterHover(Assignment assignment)
+        private static bool crossedRadius(GeoPosition previous, GeoPosition current, GeoPosition target, double radius)
         {
-            setStage(assignment, SarStage.Hover);
-            assignment.helicopter.CommandPosition = null;
+            double end = GeoPosition.HaversineDistanceNmi(current, target);
+            if (end <= radius)
+                return true;
+
+            double start = GeoPosition.HaversineDistanceNmi(previous, target);
+            if (start <= radius)
+                return true;
+
+            double travel = GeoPosition.HaversineDistanceNmi(previous, current);
+            if (travel < start - radius)
+                return false;
+
+            double angle = (previous.HeadingToPosition(target) - previous.HeadingToPosition(current)) * Math.PI / 180;
+            double along = start * Math.Cos(angle);
+            return along >= 0 && along <= travel && Math.Abs(start * Math.Sin(angle)) <= radius;
+        }
+
+        private static float lowAltitude(Assignment assignment)
+        {
+            return assignment.risky ? assignment.helicopter._hp._presetAltitudes[0] :
+                Utils.heightInFeetToUnity(pickupHeightFeet);
+        }
+
+        private static void updateApproach(Assignment assignment, GeoPosition position, GeoPosition raft, double missionTime)
+        {
+            var helicopter = assignment.helicopter;
+            var previous = assignment.lastPosition;
+            var staging = getStagingPoint(raft, assignment.approachHeading);
+            bool nearRaft = (!assignment.retried || assignment.stage == SarStage.Pickup || assignment.stage == SarStage.Hover) &&
+                crossedRadius(previous, position, raft, hoverEntryDistanceNmi);
+            var target = assignment.directApproach ? raft : staging;
+            if (assignment.stage == SarStage.Transit &&
+                (nearRaft || crossedRadius(previous, position, target, descentDistanceNmi)))
+            {
+                assignment.savedAltitude ??= (float)position._height;
+                helicopter.DesiredAltitude.Value = lowAltitude(assignment);
+                assignment.stage = SarStage.Descend;
+                assignment.stageStarted = missionTime;
+                moveSarWaypoint(assignment, target, lowAltitude(assignment));
+                assignment.lastPickupProgress = missionTime;
+            }
+
+            if (assignment.stage == SarStage.Descend &&
+                (nearRaft || assignment.directApproach || crossedRadius(previous, position, staging, stagingToleranceNmi)))
+            {
+                assignment.stage = SarStage.Pickup;
+                assignment.stageStarted = missionTime;
+                assignment.bestApproachDistance = GeoPosition.HaversineDistanceNmi(position, raft);
+                assignment.lastPickupProgress = missionTime;
+                moveSarWaypoint(assignment, raft, lowAltitude(assignment));
+            }
+
+            if (assignment.stage == SarStage.Pickup && nearRaft)
+            {
+                assignment.stage = SarStage.Hover;
+                assignment.hoverStarted = missionTime;
+                assignment.heightStableSince = missionTime;
+                assignment.lastHoverHeight = helicopter.AltitudeOverSurface;
+                assignment.lastPickupProgress = missionTime;
+                helicopter.CommandPosition = null;
+                helicopter.DesiredAltitude.Value = lowAltitude(assignment);
+            }
+
+            assignment.lastPosition = position;
+            if (assignment.stage == SarStage.Hover)
+                return;
+
+            if (assignment.stage == SarStage.Pickup)
+                target = raft;
+
+            double distance = GeoPosition.HaversineDistanceNmi(position, target);
+            if (distance <= assignment.bestApproachDistance - approachProgressNmi)
+            {
+                assignment.bestApproachDistance = distance;
+                assignment.lastPickupProgress = missionTime;
+            }
+
+            if (GeoPosition.HaversineDistanceNmi(assignment.destination, target) >= pickupDriftNmi)
+                moveSarWaypoint(assignment, target, assignment.destination._height);
         }
 
         private static void suspendPickup(Assignment assignment)
@@ -168,8 +233,12 @@ namespace AdvancedSar
             var helicopter = assignment.helicopter;
             if (missionTime < assignment.stageStarted)
             {
+                if (assignment.stage != SarStage.Departure)
+                {
+                    startApproach(assignment, missionTime);
+                    return;
+                }
                 assignment.stageStarted = missionTime;
-                assignment.lastPickupProgress = missionTime;
             }
 
             if (assignment.stage == SarStage.Departure)
@@ -184,74 +253,92 @@ namespace AdvancedSar
                 return;
             }
 
-            var raftPosition = assignment.raft.getGeoPosition();
-            if (assignment.stage == SarStage.Descend)
+            var raft = assignment.raft.getGeoPosition();
+            var position = helicopter.getGeoPosition();
+            updateApproach(assignment, position, raft, missionTime);
+            if (assignment.stage == SarStage.Hover)
             {
-                var stagingPoint = assignment.directApproach ? raftPosition :
-                    getStagingPoint(raftPosition, assignment.approachHeading);
-                if (isAtPickupAltitude(helicopter) &&
-                    GeoPosition.HaversineDistanceNmi(helicopter.getGeoPosition(), stagingPoint) <= stagingToleranceNmi)
-                    beginFinalApproach(assignment, raftPosition, missionTime);
-                else if (missionTime - assignment.stageStarted >= pickupSeconds)
-                    retryOrSkip(index, missionTime);
-                else if (GeoPosition.HaversineDistanceNmi(assignment.destination, stagingPoint) >= pickupDriftNmi)
-                    moveSarWaypoint(assignment, stagingPoint, assignment.destination._height);
+                double distance = GeoPosition.HaversineDistanceNmi(position, raft);
+                bool slow = helicopter.getVelocityInKnots() <= maxPickupSpeedKnots;
+                float height = helicopter.AltitudeOverSurface;
+                if (Math.Abs(height - assignment.lastHoverHeight) > Utils.heightInFeetToUnity(2))
+                {
+                    if (height < assignment.lastHoverHeight)
+                        assignment.lastPickupProgress = missionTime;
+                    assignment.lastHoverHeight = height;
+                    assignment.heightStableSince = missionTime;
+                }
 
-                return;
-            }
+                if (assignment.risky)
+                {
+                    int seaState = Math.Clamp(SeaPower.Environment.Instance.SeaState, 0, 12);
+                    float floor = lowAltitude(assignment) + Constants.WAVE_HEIGHTS[seaState];
+                    if (slow && height <= floor + Utils.heightInFeetToUnity(altitudeToleranceFeet) &&
+                        missionTime - assignment.heightStableSince >= settleSeconds)
+                    {
+                        endRiskyApproach(index);
+                        return;
+                    }
+                }
+                else
+                {
+                    bool allowPickup = slow && distance <= pickupDistanceNmi &&
+                        height <= Utils.heightInFeetToUnity(maxPickupHeightFeet);
+                    if (allowPickup && !helicopter.RaftPickUpAllowed.Value)
+                        assignment.lastPickupProgress = missionTime;
+                    helicopter.RaftPickUpAllowed.Value = allowPickup;
 
-            double distance = GeoPosition.HaversineDistanceNmi(helicopter.getGeoPosition(), raftPosition);
-            bool atPickupAltitude = isAtPickupAltitude(helicopter);
-            bool atPickupSpeed = helicopter.getVelocityInKnots() <= maxPickupSpeedKnots;
-            if (assignment.stage == SarStage.Pickup && atPickupAltitude && distance <= hoverEntryDistanceNmi)
-            {
-                enterHover(assignment);
+                    if (slow && distance > pickupDistanceNmi && missionTime - assignment.hoverStarted >= settleSeconds)
+                    {
+                        assignment.stage = SarStage.Pickup;
+                        assignment.bestApproachDistance = distance;
+                        moveSarWaypoint(assignment, raft, lowAltitude(assignment));
+                    }
+                }
             }
-            else if (assignment.stage == SarStage.Hover && atPickupSpeed && distance >= hoverExitDistanceNmi)
-            {
-                setStage(assignment, SarStage.Pickup);
-                moveSarWaypoint(assignment, raftPosition, assignment.destination._height);
-            }
-
-            bool inPickupPosition = distance <= pickupDistanceNmi && atPickupAltitude && atPickupSpeed;
-            if (helicopter.RaftPickUpAllowed.Value != inPickupPosition)
-                helicopter.RaftPickUpAllowed.Value = inPickupPosition;
 
             int onBoard = helicopter._obp.CurrentTransportedOnBoard.Value;
-            if (onBoard > assignment.lastOnBoard || (inPickupPosition && !assignment.reachedPickupPosition))
+            if (onBoard > assignment.lastOnBoard)
                 assignment.lastPickupProgress = missionTime;
-
-            assignment.reachedPickupPosition |= inPickupPosition;
-            if (!assignment.reachedPickupPosition && distance <= assignment.bestApproachDistance - approachProgressNmi)
-            {
-                assignment.bestApproachDistance = distance;
-                assignment.lastPickupProgress = missionTime;
-            }
-
             assignment.lastOnBoard = onBoard;
-            bool pickupStalled = missionTime - assignment.lastPickupProgress >= stallSeconds;
-            if (pickupStalled || missionTime - assignment.stageStarted >= pickupSeconds)
-            {
-                retryOrSkip(index, missionTime);
-                return;
-            }
 
-            if (assignment.stage == SarStage.Pickup &&
-                GeoPosition.HaversineDistanceNmi(assignment.destination, raftPosition) >= pickupDriftNmi)
-                moveSarWaypoint(assignment, raftPosition, assignment.destination._height);
+            bool timedOut = missionTime >= assignment.attemptDeadline ||
+                (assignment.stage != SarStage.Transit && missionTime - assignment.stageStarted >= pickupSeconds);
+            double progressLimit = assignment.stage == SarStage.Transit ? 2 * stallSeconds : stallSeconds;
+            if (timedOut || missionTime - assignment.lastPickupProgress >= progressLimit)
+                retryOrSkip(index, missionTime);
+        }
+
+        private static void endRiskyApproach(int index)
+        {
+            var helicopter = assignments[index].helicopter;
+            var home = helicopter.getHomeBase();
+            endSar(index, null);
+            const string message = "Too risky, unable to conduct SAR";
+            Globals._mainGameViewModel?.RaiseAlert(helicopter, "${Name}: " + message);
+            helicopter.ShowOrderFeedback(message, 5f);
+
+            if (isAvailableHome(home) && helicopter.CurrentOrder.Value?.OrderType != Order.Type.ReturnToBase)
+                helicopter.setOrder(Order.Type.ReturnToBase, home, displayOrderText: false);
         }
 
         private static void retryOrSkip(int index, double missionTime)
         {
             var assignment = assignments[index];
             var helicopter = assignment.helicopter;
+            if (assignment.risky)
+            {
+                endRiskyApproach(index);
+                return;
+            }
+
             if (!assignment.retried && findReachableSarTarget(helicopter, out _, retryRaft: assignment.raft) != null)
             {
                 assignment.retried = true;
                 assignment.directApproach = false;
                 var raftPosition = assignment.raft.getGeoPosition();
                 assignment.approachHeading = raftPosition.HeadingToPosition(helicopter.getGeoPosition());
-                beginDescent(assignment, getStagingPoint(raftPosition, assignment.approachHeading), missionTime);
+                startApproach(assignment, missionTime);
                 return;
             }
 
