@@ -28,6 +28,10 @@
       <Private>false</Private>
       <ExternallyResolved>true</ExternallyResolved>
     </Reference>
+    <Reference Include="UniRx">
+      <HintPath>$(ManagedDir)/UniRx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine">
       <HintPath>$(ManagedDir)/UnityEngine.dll</HintPath>
       <Private>false</Private>
@@ -49,7 +53,7 @@
            Text="BepInEx.dll was not found in '$(BepInExCoreDir)'. Set up Keel or pass -p:BepInExCoreDir with an extracted BepInEx 5 core folder." />
     <Error Condition="!Exists('$(BepInExCoreDir)/0Harmony.dll')"
            Text="0Harmony.dll was not found in the BepInEx core folder '$(BepInExCoreDir)'." />
-    <Error Condition="!Exists('$(ManagedDir)/Noesis.NoesisGUI.dll') Or !Exists('$(ManagedDir)/Seapower-Scripts.dll')"
+    <Error Condition="!Exists('$(ManagedDir)/Noesis.NoesisGUI.dll') Or !Exists('$(ManagedDir)/Seapower-Scripts.dll') Or !Exists('$(ManagedDir)/UniRx.dll')"
            Text="Sea Power's map and UI assemblies were not found in '$(ManagedDir)'." />
   </Target>
 

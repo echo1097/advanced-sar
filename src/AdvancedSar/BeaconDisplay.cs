@@ -18,13 +18,14 @@ namespace AdvancedSar
             new Dictionary<MapDrawToolbarView, (ToolBar, Button, MapViewModel)>();
         private readonly Dictionary<MapBase, (MapViewModel model, BeaconLayer layer)> maps =
             new Dictionary<MapBase, (MapViewModel, BeaconLayer)>();
-        private readonly List<GeoPosition> positions = new List<GeoPosition>();
+        private readonly List<(GeoPosition position, int survivors)> beacons =
+            new List<(GeoPosition, int)>();
         private readonly ManualLogSource logger;
         private readonly SolidColorBrush inactiveBrush = new SolidColorBrush(Color.FromArgb(255, 180, 184, 186));
         private readonly SolidColorBrush activeBrush = new SolidColorBrush(Color.FromArgb(255, 255, 216, 141));
         private readonly SolidColorBrush darkBrush = new SolidColorBrush(Color.FromArgb(255, 44, 49, 52));
-        private UnityEngine.Texture2D toolbarTexture;
-        private ImageBrush toolbarMask;
+        private UnityEngine.Texture2D iconTexture;
+        private ImageBrush iconMask;
         private bool showBeacons;
         private float nextRefresh;
 
@@ -44,8 +45,8 @@ namespace AdvancedSar
                 return;
             }
 
-            if (toolbarMask == null)
-                loadToolbarIcon();
+            if (iconMask == null)
+                loadIcon();
 
             var button = new Button
             {
@@ -59,7 +60,7 @@ namespace AdvancedSar
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center,
                     IsHitTestVisible = false,
-                    OpacityMask = toolbarMask
+                    OpacityMask = iconMask
                 }
             };
             button.Click += toggleBeacons;
@@ -121,7 +122,7 @@ namespace AdvancedSar
 
         private void refreshVisibleMaps()
         {
-            bool positionsRead = false;
+            bool beaconsRead = false;
             foreach (var pair in maps)
             {
                 var entry = pair.Value;
@@ -131,13 +132,13 @@ namespace AdvancedSar
                     continue;
                 }
 
-                if (!positionsRead)
+                if (!beaconsRead)
                 {
-                    readPositions();
-                    positionsRead = true;
+                    readBeacons();
+                    beaconsRead = true;
                 }
 
-                entry.layer.show(positions);
+                entry.layer.show(beacons, iconMask);
             }
         }
 
@@ -152,23 +153,23 @@ namespace AdvancedSar
             return false;
         }
 
-        private void readPositions()
+        private void readBeacons()
         {
-            positions.Clear();
+            beacons.Clear();
             if (!ObjectsManager.InstanceExists(false))
                 return;
 
             foreach (var raft in ObjectsManager.Instance._listOfAllRafts)
             {
-                if (raft != null && !raft.IsDestroyed)
-                    positions.Add(raft.getGeoPosition());
+                if (raft != null && !raft.IsDestroyed && !raft.IsDespawned)
+                    beacons.Add((raft.getGeoPosition(), raft._obp.CurrentTransportedOnBoard.Value));
             }
         }
 
         private void updateButton(Button button)
         {
             var brush = showBeacons ? activeBrush : inactiveBrush;
-            if (toolbarMask != null && button.Content is Border icon)
+            if (iconMask != null && button.Content is Border icon)
                 icon.Background = brush;
             else
                 button.Content = BeaconLayer.createRing(16, brush, darkBrush);
@@ -176,7 +177,7 @@ namespace AdvancedSar
             ToolTipService.SetToolTip(button, showBeacons ? "Hide rescue beacons" : "Show all rescue beacons");
         }
 
-        private void loadToolbarIcon()
+        private void loadIcon()
         {
             using var asset = typeof(BeaconDisplay).Assembly.GetManifestResourceStream("AdvancedSar.LifeRing.png");
             if (asset == null)
@@ -198,8 +199,8 @@ namespace AdvancedSar
                 return;
             }
 
-            toolbarTexture = texture;
-            toolbarMask = new ImageBrush(new TextureSource(texture));
+            iconTexture = texture;
+            iconMask = new ImageBrush(new TextureSource(texture));
         }
 
         private void removeButton(ToolBar toolbar, Button button)
@@ -219,8 +220,8 @@ namespace AdvancedSar
             buttons.Clear();
             maps.Clear();
 
-            if (toolbarTexture != null)
-                UnityEngine.Object.Destroy(toolbarTexture);
+            if (iconTexture != null)
+                UnityEngine.Object.Destroy(iconTexture);
         }
     }
 }
