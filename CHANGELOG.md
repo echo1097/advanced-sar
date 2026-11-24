@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1
+
+- SAR now descends short of the raft and switches to hover once close enough for pickup. If the helicopter circles without getting closer, SAR retries the approach once.
+
+## 0.4.0
+
+- Helicopters on SAR now properly descend to 20 feet near their raft and hold position for survivor pickup.
+- SAR checks the helicopter's own transport capacity. After pickup it climbs back to its previous altitude, then looks for another reachable friendly raft if it has room and fuel to get home.
+- If pickup stalls, SAR retries the approach once when fuel allows, then skips that raft for the rest of the run. During transit, route checks still run every 30 in-game seconds.
+
 ## 0.3.2
 
 - Begin SAR checks whether the helicopter has enough fuel to reach the raft and return to its home ship or airbase. It skips rafts outside that range.

@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace AdvancedSar
 {
-    [BepInPlugin(PluginId, "Advanced SAR - Search & Rescue", "0.3.2")]
+    [BepInPlugin(PluginId, "Advanced SAR - Search & Rescue", "0.4.1")]
     public sealed class AdvancedSarPlugin : BaseUnityPlugin
     {
         private const string PluginId = "com.advancedsar.seapower";
@@ -26,7 +26,7 @@ namespace AdvancedSar
         private void Update()
         {
             display?.refresh(Time.unscaledTime);
-            SarOrders.updateRoutes();
+            SarOrders.updateRoutes(Time.unscaledTime);
         }
 
         private void OnDisable()

@@ -1,4 +1,4 @@
-# Advanced SAR - Search & Rescue
+# Advanced SAR - Search & Rescue Quality of Life
 
 ![Advanced SAR logo](assets/splash-logo.png)
 
