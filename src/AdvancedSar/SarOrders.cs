@@ -139,7 +139,7 @@ namespace AdvancedSar
                     continue;
 
                 if (!hasRoom(assignment.helicopter))
-                    endSar(index, "SAR complete. Survivor capacity reached");
+                    finishSar(index, "SAR complete. Survivor capacity reached");
                 else if (hasActiveRaft(assignment, activeRafts))
                     updateTransit(assignment, missionTime);
                 else
@@ -161,46 +161,59 @@ namespace AdvancedSar
         private static void updateTransit(Assignment assignment, double missionTime)
         {
             var raftPosition = assignment.raft.getGeoPosition();
-            var stagingPoint = getStagingPoint(raftPosition, assignment.approachHeading);
+            bool flyingLow = assignment.savedAltitude.HasValue;
+            var approachPoint = flyingLow ? raftPosition : getStagingPoint(raftPosition, assignment.approachHeading);
             var helicopterPosition = assignment.helicopter.getGeoPosition();
-            if (isAtPickupAltitude(assignment.helicopter) &&
-                GeoPosition.HaversineDistanceNmi(helicopterPosition, raftPosition) <= hoverEntryDistanceNmi)
+            double distanceToRaft = GeoPosition.HaversineDistanceNmi(helicopterPosition, raftPosition);
+            if ((flyingLow && distanceToRaft <= descentDistanceNmi) ||
+                (distanceToRaft <= hoverEntryDistanceNmi && isAtPickupAltitude(assignment.helicopter)))
             {
-                assignment.savedAltitude = (float)helicopterPosition._height;
+                assignment.savedAltitude ??= (float)helicopterPosition._height;
                 beginFinalApproach(assignment, raftPosition, missionTime);
                 return;
             }
 
-            if (GeoPosition.HaversineDistanceNmi(helicopterPosition, stagingPoint) <= descentDistanceNmi)
+            if (!flyingLow && GeoPosition.HaversineDistanceNmi(helicopterPosition, approachPoint) <= descentDistanceNmi)
             {
                 assignment.savedAltitude = (float)helicopterPosition._height;
-                beginDescent(assignment, stagingPoint, missionTime);
+                beginDescent(assignment, approachPoint, missionTime);
                 return;
             }
 
-            if (GeoPosition.HaversineDistanceNmi(assignment.destination, stagingPoint) >= waypointUpdateDistanceNmi)
-                moveSarWaypoint(assignment, stagingPoint, assignment.waypoint.WaypointPosition._height);
+            if (GeoPosition.HaversineDistanceNmi(assignment.destination, approachPoint) >= waypointUpdateDistanceNmi)
+                moveSarWaypoint(assignment, approachPoint, assignment.waypoint.WaypointPosition._height);
         }
 
         private static void continueSar(int index)
         {
             var assignment = assignments[index];
             var helicopter = assignment.helicopter;
+            if (!hasRoom(helicopter))
+            {
+                finishSar(index, "SAR complete. Survivor capacity reached");
+                return;
+            }
+
             assignment.raft = null;
             var target = findReachableSarTarget(helicopter, out string failureMessage, assignment.skippedRafts);
             if (target == null)
             {
-                endSar(index, failureMessage ?? "No reachable friendly life rafts");
+                finishSar(index, failureMessage ?? "No reachable friendly life rafts");
                 return;
             }
 
             assignment.raft = target;
             assignment.retried = false;
-            restorePickupPermission(assignment);
             setStage(assignment, SarStage.Transit);
             var raftPosition = target.getGeoPosition();
             assignment.approachHeading = raftPosition.HeadingToPosition(helicopter.getGeoPosition());
-            moveSarWaypoint(assignment, getStagingPoint(raftPosition, assignment.approachHeading), helicopter.DesiredAltitude.Value);
+            bool flyingLow = assignment.savedAltitude.HasValue;
+            var approachPoint = flyingLow ? raftPosition : getStagingPoint(raftPosition, assignment.approachHeading);
+            double altitude = flyingLow ? Utils.heightInFeetToUnity(pickupHeightFeet) : helicopter.DesiredAltitude.Value;
+            moveSarWaypoint(assignment, approachPoint, altitude);
+            if (flyingLow)
+                suspendPickup(assignment);
+
             updateTransit(assignment, GameTime.missionElapsedTime);
         }
 
@@ -214,17 +227,28 @@ namespace AdvancedSar
         {
             var assignment = assignments[index];
             var helicopter = assignment.helicopter;
-            bool restoreAltitude = assignment.stage != SarStage.Transit;
+            removeSarWaypoint(assignment);
             releaseAssignment(index);
-            helicopter._userRoot.DeleteTask(assignment.waypoint);
-            if (helicopter.CommandPosition is GeoPosition position && position.Equals(assignment.destination))
-                helicopter.CommandPosition = null;
 
-            if (restoreAltitude)
-                helicopter.DesiredAltitude.Value = assignment.savedAltitude;
+            if (assignment.savedAltitude is float altitude)
+                helicopter.DesiredAltitude.Value = altitude;
 
             if (feedback != null)
                 helicopter.ShowOrderFeedback(feedback, 5f);
+        }
+
+        private static void removeSarWaypoint(Assignment assignment)
+        {
+            var waypoint = assignment.waypoint;
+            if (waypoint == null)
+                return;
+
+            var helicopter = assignment.helicopter;
+            sarWaypoints.Remove(waypoint);
+            helicopter._userRoot.DeleteTask(waypoint);
+            assignment.waypoint = null;
+            if (helicopter.CommandPosition is GeoPosition position && position.Equals(assignment.destination))
+                helicopter.CommandPosition = null;
         }
 
         private static void releaseAssignment(int index)
@@ -232,7 +256,8 @@ namespace AdvancedSar
             var assignment = assignments[index];
             restorePickupPermission(assignment);
             setStage(assignment, SarStage.Transit);
-            sarWaypoints.Remove(assignment.waypoint);
+            if (assignment.waypoint != null)
+                sarWaypoints.Remove(assignment.waypoint);
             assignments.RemoveAt(index);
         }
 
@@ -245,10 +270,10 @@ namespace AdvancedSar
                     continue;
 
                 var helicopter = assignment.helicopter;
-                if (assignment.stage != SarStage.Transit && canReceiveSarOrders(helicopter) &&
+                if (assignment.stage != SarStage.Climb && assignment.savedAltitude is float altitude && canReceiveSarOrders(helicopter) &&
                     helicopter.GetWaypoint(1) == null && hasNoOrder(helicopter) &&
                     helicopter.DesiredAltitude.Value == (float)assignment.destination._height)
-                    helicopter.DesiredAltitude.Value = assignment.savedAltitude;
+                    helicopter.DesiredAltitude.Value = altitude;
 
                 releaseAssignment(index);
             }
@@ -267,10 +292,13 @@ namespace AdvancedSar
                 !ReferenceEquals(helicopter.GetWaypoint(1), assignment.waypoint))
                 return false;
 
+            if (assignment.stage == SarStage.Climb)
+                return helicopter.CommandPosition == null && helicopter.DesiredAltitude.Value == assignment.savedAltitude;
+
             var position = assignment.waypoint.WaypointPosition;
             var destination = assignment.destination;
             return position.Latitude == destination.Latitude && position.Longitude == destination.Longitude &&
-                (assignment.stage == SarStage.Transit || position._height == destination._height);
+                (!assignment.savedAltitude.HasValue || position._height == destination._height);
         }
 
         private static bool hasNoOrder(Helicopter helicopter)

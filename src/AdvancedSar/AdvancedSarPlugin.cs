@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace AdvancedSar
 {
-    [BepInPlugin(PluginId, "Advanced SAR - Search & Rescue", "0.4.1")]
+    [BepInPlugin(PluginId, "Advanced SAR - Search & Rescue", "0.4.2")]
     public sealed class AdvancedSarPlugin : BaseUnityPlugin
     {
         private const string PluginId = "com.advancedsar.seapower";

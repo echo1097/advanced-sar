@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2
+
+- Helicopters with room and enough fuel fly straight to the next eligible raft at 20 feet.
+- When the SAR run ends, the helicopter removes its SAR waypoint and climbs in place to the altitude it had before the first descent.
+
 ## 0.4.1
 
 - SAR now descends short of the raft and switches to hover once close enough for pickup. If the helicopter circles without getting closer, SAR retries the approach once.

@@ -33,20 +33,20 @@ namespace AdvancedSar
             Descend,
             Pickup,
             Hover,
-            Climb,
-            RetryClimb
+            Climb
         }
 
         private sealed class Assignment
         {
             internal readonly Helicopter helicopter;
-            internal readonly GoToWaypointTask waypoint;
+            internal GoToWaypointTask waypoint;
             internal HashSet<ObjectBase> skippedRafts;
             internal ObjectBase raft;
             internal GeoPosition destination;
             internal float approachHeading;
             internal SarStage stage;
-            internal float savedAltitude;
+            internal float? savedAltitude;
+            internal string finishMessage;
             internal bool retried;
             internal bool? originalPickupPermission;
             internal int lastOnBoard;
@@ -133,7 +133,7 @@ namespace AdvancedSar
             suspendPickup(assignment);
             moveSarWaypoint(assignment, raftPosition, Utils.heightInFeetToUnity(pickupHeightFeet));
 
-            if (assignment.bestApproachDistance <= hoverEntryDistanceNmi)
+            if (assignment.bestApproachDistance <= hoverEntryDistanceNmi && isAtPickupAltitude(helicopter))
                 enterHover(assignment);
         }
 
@@ -160,15 +160,15 @@ namespace AdvancedSar
                 assignment.lastPickupProgress = missionTime;
             }
 
-            if (assignment.stage == SarStage.Climb || assignment.stage == SarStage.RetryClimb)
+            if (assignment.stage == SarStage.Climb)
             {
-                updateClimb(index, missionTime, activeRafts);
+                updateClimb(index, missionTime);
                 return;
             }
 
             if (!hasRoom(helicopter) || !hasActiveRaft(assignment, activeRafts))
             {
-                beginClimb(assignment, SarStage.Climb, missionTime);
+                continueSar(index);
                 return;
             }
 
@@ -180,7 +180,7 @@ namespace AdvancedSar
                     GeoPosition.HaversineDistanceNmi(helicopter.getGeoPosition(), stagingPoint) <= stagingToleranceNmi)
                     beginFinalApproach(assignment, raftPosition, missionTime);
                 else if (missionTime - assignment.stageStarted >= pickupSeconds)
-                    retryOrSkip(assignment, missionTime);
+                    retryOrSkip(index, missionTime);
                 else if (GeoPosition.HaversineDistanceNmi(assignment.destination, stagingPoint) >= pickupDriftNmi)
                     moveSarWaypoint(assignment, stagingPoint, assignment.destination._height);
 
@@ -219,7 +219,7 @@ namespace AdvancedSar
             bool pickupStalled = missionTime - assignment.lastPickupProgress >= stallSeconds;
             if (pickupStalled || missionTime - assignment.stageStarted >= pickupSeconds)
             {
-                retryOrSkip(assignment, missionTime);
+                retryOrSkip(index, missionTime);
                 return;
             }
 
@@ -228,64 +228,50 @@ namespace AdvancedSar
                 moveSarWaypoint(assignment, raftPosition, assignment.destination._height);
         }
 
-        private static void retryOrSkip(Assignment assignment, double missionTime)
+        private static void retryOrSkip(int index, double missionTime)
         {
-            if (!assignment.retried)
+            var assignment = assignments[index];
+            var helicopter = assignment.helicopter;
+            if (!assignment.retried && findReachableSarTarget(helicopter, out _, retryRaft: assignment.raft) != null)
             {
                 assignment.retried = true;
-                beginClimb(assignment, SarStage.RetryClimb, missionTime);
+                var raftPosition = assignment.raft.getGeoPosition();
+                assignment.approachHeading = raftPosition.HeadingToPosition(helicopter.getGeoPosition());
+                beginDescent(assignment, getStagingPoint(raftPosition, assignment.approachHeading), missionTime);
                 return;
             }
 
             skipRaft(assignment);
-            assignment.helicopter.ShowOrderFeedback("SAR pickup stalled. Skipping this raft", 5f);
-            beginClimb(assignment, SarStage.Climb, missionTime);
+            helicopter.ShowOrderFeedback("SAR pickup stalled. Skipping this raft", 5f);
+            continueSar(index);
         }
 
-        private static void beginClimb(Assignment assignment, SarStage stage, double missionTime)
+        private static void finishSar(int index, string feedback)
         {
-            if (stage == SarStage.Climb)
-                assignment.raft = null;
+            var assignment = assignments[index];
+            if (!(assignment.savedAltitude is float altitude))
+            {
+                endSar(index, feedback);
+                return;
+            }
 
-            assignment.helicopter.RaftPickUpAllowed.Value = false;
-            setStage(assignment, stage);
-            assignment.stageStarted = missionTime;
-            moveSarWaypoint(assignment, assignment.helicopter.getGeoPosition(), assignment.savedAltitude);
+            assignment.raft = null;
+            suspendPickup(assignment);
+            setStage(assignment, SarStage.Climb);
+            assignment.stageStarted = GameTime.missionElapsedTime;
+            assignment.finishMessage = feedback;
+            removeSarWaypoint(assignment);
+            assignment.helicopter.DesiredAltitude.Value = altitude;
         }
 
-        private static void updateClimb(int index, double missionTime, List<ObjectBase> activeRafts)
+        private static void updateClimb(int index, double missionTime)
         {
             var assignment = assignments[index];
             var helicopter = assignment.helicopter;
-            if (helicopter.getGeoPosition()._height < assignment.savedAltitude - Utils.heightInFeetToUnity(altitudeToleranceFeet))
-            {
-                if (missionTime - assignment.stageStarted >= pickupSeconds)
-                    endSar(index, "SAR ended. Unable to reach previous altitude");
-
-                return;
-            }
-
-            if (!hasRoom(helicopter))
-            {
-                endSar(index, "SAR complete. Survivor capacity reached");
-                return;
-            }
-
-            if (assignment.stage == SarStage.RetryClimb && hasActiveRaft(assignment, activeRafts))
-            {
-                var retryRaft = findReachableSarTarget(helicopter, out _, retryRaft: assignment.raft);
-                if (retryRaft != null)
-                {
-                    var raftPosition = retryRaft.getGeoPosition();
-                    assignment.approachHeading = raftPosition.HeadingToPosition(helicopter.getGeoPosition());
-                    beginDescent(assignment, getStagingPoint(raftPosition, assignment.approachHeading), missionTime);
-                    return;
-                }
-
-                skipRaft(assignment);
-            }
-
-            continueSar(index);
+            if (helicopter.getGeoPosition()._height >= assignment.savedAltitude.Value - Utils.heightInFeetToUnity(altitudeToleranceFeet))
+                endSar(index, assignment.finishMessage);
+            else if (missionTime - assignment.stageStarted >= pickupSeconds)
+                endSar(index, "SAR ended. Unable to reach previous altitude");
         }
 
         private static void restorePickupPermission(Assignment assignment)
