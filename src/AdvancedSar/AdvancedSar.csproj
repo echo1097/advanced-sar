@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <GameDir Condition="'$(GameDir)' == ''">$(MSBuildProgramFiles32)/Steam/steamapps/common/Sea Power</GameDir>
     <ManagedDir>$(GameDir)/Sea Power_Data/Managed</ManagedDir>
     <BepInExCoreDir Condition="'$(BepInExCoreDir)' == '' And Exists('$(GameDir)/BepInEx/core/BepInEx.dll')">$(GameDir)/BepInEx/core</BepInExCoreDir>
@@ -58,7 +58,7 @@
   </Target>
 
   <Target Name="StageMod" AfterTargets="Build">
-    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)/../../workshop/_info.ini"
+    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)/../../workshop/_info.ini;$(MSBuildProjectDirectory)/../../CHANGELOG.md"
           DestinationFolder="$(ModDir)" SkipUnchangedFiles="true" />
   </Target>
 </Project>

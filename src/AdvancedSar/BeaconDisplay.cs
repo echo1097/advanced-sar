@@ -14,19 +14,22 @@ namespace AdvancedSar
     {
         private const float refreshInterval = 0.25f;
 
-        private readonly Dictionary<MapDrawToolbarView, (ToolBar toolbar, Button button, MapViewModel model)> buttons =
-            new Dictionary<MapDrawToolbarView, (ToolBar, Button, MapViewModel)>();
+        private readonly Dictionary<MapDrawToolbarView, (ToolBar toolbar, Button beaconButton, Button enemyButton, MapViewModel model)> buttons =
+            new Dictionary<MapDrawToolbarView, (ToolBar, Button, Button, MapViewModel)>();
         private readonly Dictionary<MapBase, (MapViewModel model, BeaconLayer layer)> maps =
             new Dictionary<MapBase, (MapViewModel, BeaconLayer)>();
-        private readonly List<(GeoPosition position, int survivors)> beacons =
-            new List<(GeoPosition, int)>();
+        private readonly List<(GeoPosition position, int survivors, Brush color)> beacons =
+            new List<(GeoPosition, int, Brush)>();
         private readonly ManualLogSource logger;
         private readonly SolidColorBrush inactiveBrush = new SolidColorBrush(Color.FromArgb(255, 180, 184, 186));
         private readonly SolidColorBrush activeBrush = new SolidColorBrush(Color.FromArgb(255, 255, 216, 141));
+        private readonly SolidColorBrush friendlyBrush = new SolidColorBrush(Color.FromArgb(255, 111, 181, 255));
+        private readonly SolidColorBrush enemyBrush = new SolidColorBrush(Color.FromArgb(255, 255, 112, 101));
         private readonly SolidColorBrush darkBrush = new SolidColorBrush(Color.FromArgb(255, 44, 49, 52));
         private UnityEngine.Texture2D iconTexture;
         private ImageBrush iconMask;
         private bool showBeacons;
+        private bool showEnemyBeacons = true;
         private float nextRefresh;
 
         internal BeaconDisplay(ManualLogSource logger)
@@ -48,7 +51,7 @@ namespace AdvancedSar
             if (iconMask == null)
                 loadIcon();
 
-            var button = new Button
+            var beaconButton = new Button
             {
                 Width = 30,
                 Height = 30,
@@ -63,10 +66,20 @@ namespace AdvancedSar
                     OpacityMask = iconMask
                 }
             };
-            button.Click += toggleBeacons;
-            updateButton(button);
-            toolbar.Items.Add(button);
-            buttons.Add(view, (toolbar, button, scene.DisplayMap));
+            var enemyButton = new Button
+            {
+                Width = 48,
+                Height = 30,
+                Focusable = false,
+                Content = "Enemy"
+            };
+
+            beaconButton.Click += toggleBeacons;
+            enemyButton.Click += toggleEnemyBeacons;
+            updateButtons(beaconButton, enemyButton);
+            toolbar.Items.Add(beaconButton);
+            toolbar.Items.Add(enemyButton);
+            buttons.Add(view, (toolbar, beaconButton, enemyButton, scene.DisplayMap));
         }
 
         internal void removeToolbar(MapDrawToolbarView view)
@@ -74,7 +87,7 @@ namespace AdvancedSar
             if (!buttons.TryGetValue(view, out var entry))
                 return;
 
-            removeButton(entry.toolbar, entry.button);
+            removeButtons(entry.toolbar, entry.beaconButton, entry.enemyButton);
             buttons.Remove(view);
         }
 
@@ -90,7 +103,7 @@ namespace AdvancedSar
             }
 
             if (model != null)
-                maps.Add(map, (model, new BeaconLayer(map, activeBrush, darkBrush)));
+                maps.Add(map, (model, new BeaconLayer(map, darkBrush)));
         }
 
         internal void refresh(float time)
@@ -106,7 +119,7 @@ namespace AdvancedSar
         {
             showBeacons = !showBeacons;
             foreach (var entry in buttons.Values)
-                updateButton(entry.button);
+                updateButtons(entry.beaconButton, entry.enemyButton);
 
             if (showBeacons)
             {
@@ -118,6 +131,16 @@ namespace AdvancedSar
                 foreach (var entry in maps.Values)
                     entry.layer.clear();
             }
+        }
+
+        private void toggleEnemyBeacons(object sender, RoutedEventArgs args)
+        {
+            showEnemyBeacons = !showEnemyBeacons;
+            foreach (var entry in buttons.Values)
+                updateButtons(entry.beaconButton, entry.enemyButton);
+
+            if (showBeacons)
+                refreshVisibleMaps();
         }
 
         private void refreshVisibleMaps()
@@ -138,7 +161,7 @@ namespace AdvancedSar
                     beaconsRead = true;
                 }
 
-                entry.layer.show(beacons, iconMask);
+                entry.layer.show(beacons);
             }
         }
 
@@ -159,22 +182,41 @@ namespace AdvancedSar
             if (!ObjectsManager.InstanceExists(false))
                 return;
 
+            var player = Globals._playerTaskforce;
             foreach (var raft in ObjectsManager.Instance._listOfAllRafts)
             {
-                if (raft != null && !raft.IsDestroyed && !raft.IsDespawned)
-                    beacons.Add((raft.getGeoPosition(), raft._obp.CurrentTransportedOnBoard.Value));
+                if (raft == null || raft.IsDestroyed || raft.IsDespawned)
+                    continue;
+
+                var side = raft._taskforce;
+                var relation = side == null || player == null ? RelationsState.Unknown : player.RelationshipTo(side);
+                if (relation == RelationsState.Hostile && !showEnemyBeacons)
+                    continue;
+
+                Brush color = relation switch
+                {
+                    RelationsState.Friendly => friendlyBrush,
+                    RelationsState.Hostile => enemyBrush,
+                    _ => activeBrush
+                };
+
+                beacons.Add((raft.getGeoPosition(), raft._obp.CurrentTransportedOnBoard.Value, color));
             }
         }
 
-        private void updateButton(Button button)
+        private void updateButtons(Button beaconButton, Button enemyButton)
         {
             var brush = showBeacons ? activeBrush : inactiveBrush;
-            if (iconMask != null && button.Content is Border icon)
+            if (iconMask != null && beaconButton.Content is Border icon)
                 icon.Background = brush;
             else
-                button.Content = BeaconLayer.createRing(16, brush, darkBrush);
+                beaconButton.Content = BeaconLayer.createRing(16, brush, darkBrush, out _, out _);
 
-            ToolTipService.SetToolTip(button, showBeacons ? "Hide rescue beacons" : "Show all rescue beacons");
+            ToolTipService.SetToolTip(beaconButton, showBeacons ? "Hide rescue beacons" : "Show rescue beacons");
+
+            enemyButton.IsEnabled = showBeacons;
+            enemyButton.Foreground = showBeacons && showEnemyBeacons ? enemyBrush : inactiveBrush;
+            ToolTipService.SetToolTip(enemyButton, showEnemyBeacons ? "Hide enemy survivors" : "Show enemy survivors");
         }
 
         private void loadIcon()
@@ -203,16 +245,18 @@ namespace AdvancedSar
             iconMask = new ImageBrush(new TextureSource(texture));
         }
 
-        private void removeButton(ToolBar toolbar, Button button)
+        private void removeButtons(ToolBar toolbar, Button beaconButton, Button enemyButton)
         {
-            button.Click -= toggleBeacons;
-            toolbar.Items.Remove(button);
+            beaconButton.Click -= toggleBeacons;
+            enemyButton.Click -= toggleEnemyBeacons;
+            toolbar.Items.Remove(beaconButton);
+            toolbar.Items.Remove(enemyButton);
         }
 
         public void Dispose()
         {
             foreach (var entry in buttons.Values)
-                removeButton(entry.toolbar, entry.button);
+                removeButtons(entry.toolbar, entry.beaconButton, entry.enemyButton);
 
             foreach (var entry in maps.Values)
                 entry.layer.clear();
