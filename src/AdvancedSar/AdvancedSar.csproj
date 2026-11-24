@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
     <GameDir Condition="'$(GameDir)' == ''">$(MSBuildProgramFiles32)/Steam/steamapps/common/Sea Power</GameDir>
     <ManagedDir>$(GameDir)/Sea Power_Data/Managed</ManagedDir>
     <BepInExCoreDir Condition="'$(BepInExCoreDir)' == '' And Exists('$(GameDir)/BepInEx/core/BepInEx.dll')">$(GameDir)/BepInEx/core</BepInExCoreDir>

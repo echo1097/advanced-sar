@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+
+- Begin SAR checks whether the helicopter has enough fuel to reach the raft and return to its home ship or airbase. It skips rafts outside that range.
+- Travel time is estimated at the helicopter's top speed. The fuel check uses the higher of its hover and full-speed burn rates, including loadout weight.
+- The estimate allows 4 minutes for pickup and 2 minutes for landing. The fuel reserve is 20% of the estimated trip or 5 minutes, whichever is greater.
+- Active SAR routes check their raft every 30 in-game seconds. The waypoint follows drift of at least 0.1 nautical miles. If the raft disappears or is emptied, SAR switches to a reachable, unclaimed raft when one is available.
+
 ## 0.3.1
 
 - Added **Cancel SAR** to remove the helicopter's SAR waypoint and free the raft for another helicopter.
