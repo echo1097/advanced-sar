@@ -428,6 +428,7 @@ namespace AdvancedSar
 
             if (abortLaunch && recovery.pending != null && recovery.helicopter == null &&
                 recovery.home != null && !recovery.home.IsDestroyed && !recovery.home.IsDespawned &&
+                recovery.deck != null && recovery.deck.FlightDeckTasks != null &&
                 recovery.deck.FlightDeckTasks.Contains(recovery.pending))
                 recovery.deck.abortLaunchTask(recovery.pending._uid, false);
 
@@ -533,7 +534,9 @@ namespace AdvancedSar
             if (helicopter == null || helicopter.IsDestroyed || helicopter.IsDespawned)
                 return;
 
-            if (ReferenceEquals(landing._flightDeckTask._stateMachine.CurrentState, landing))
+            if (landing._flightDeckTask?._stateMachine != null &&
+                ReferenceEquals(landing._flightDeckTask._stateMachine.CurrentState, landing) &&
+                helicopter._hfcs != null)
                 helicopter._hfcs.stopRotors();
 
             if (!recovery.readyToDepart && recovery.unloaded > 0 && isAvailableHome(recovery.home))

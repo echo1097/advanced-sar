@@ -176,7 +176,9 @@ namespace AdvancedSar
         {
             if (!ObjectsManager.InstanceExists(false))
             {
-                if (assignments.Count > 0 || raftDepartures.Count > 0)
+                if (assignments.Count > 0 || sarWaypoints.Count > 0 || raftDepartures.Count > 0 ||
+                    recoveries.Count > 0 || sarLaunches.Count > 0 || shipLaunches.Count > 0 ||
+                    coolingHelicopters.Count > 0)
                     clearAssignments();
                 return;
             }
@@ -215,19 +217,63 @@ namespace AdvancedSar
 
         internal static void clearAssignments()
         {
-            clearShipOrders();
-            for (int index = assignments.Count - 1; index >= 0; index--)
+            try
             {
-                if (hasUnchangedWaypoint(assignments[index]))
-                    endSar(index, null);
-                else
-                    releaseAssignment(index);
+                clearShipOrders();
+                for (int index = assignments.Count - 1; index >= 0; index--)
+                {
+                    try
+                    {
+                        if (hasUnchangedWaypoint(assignments[index]))
+                            endSar(index, null);
+                        else
+                            releaseAssignment(index);
+                    }
+                    catch (Exception)
+                    {
+                        if (index < assignments.Count)
+                        {
+                            var assignment = assignments[index];
+                            try
+                            {
+                                assignment.pickupSubscription?.Dispose();
+                            }
+                            catch (Exception)
+                            {
+                            }
+
+                            if (assignment.waypoint != null)
+                                sarWaypoints.Remove(assignment.waypoint);
+                            assignments.RemoveAt(index);
+                        }
+                    }
+                }
+
+                for (int index = recoveries.Count - 1; index >= 0; index--)
+                {
+                    try
+                    {
+                        removeRecovery(index, true);
+                    }
+                    catch (Exception)
+                    {
+                        if (index < recoveries.Count)
+                        {
+                            forgetLaunch(recoveries[index]);
+                            recoveries.RemoveAt(index);
+                        }
+                    }
+                }
             }
-
-            raftDepartures.Clear();
-
-            for (int index = recoveries.Count - 1; index >= 0; index--)
-                removeRecovery(index, true);
+            finally
+            {
+                clearShipOrders();
+                assignments.Clear();
+                sarWaypoints.Clear();
+                raftDepartures.Clear();
+                recoveries.Clear();
+                sarLaunches.Clear();
+            }
         }
 
         private static void continueSar(int index, bool justClearedShip = false)
@@ -307,7 +353,7 @@ namespace AdvancedSar
         {
             var assignment = assignments[index];
             leaveRaft(assignment);
-            assignment.pickupSubscription.Dispose();
+            assignment.pickupSubscription?.Dispose();
             restorePickupPermission(assignment);
             if (assignment.waypoint != null)
                 sarWaypoints.Remove(assignment.waypoint);
