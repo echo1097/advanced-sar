@@ -2,8 +2,10 @@ using BepInEx;
 using HarmonyLib;
 using MapControl;
 using Noesis;
+using SeaPower;
 using SeapowerUI;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace AdvancedSar
 {
@@ -18,6 +20,7 @@ namespace AdvancedSar
         private void OnEnable()
         {
             display = new BeaconDisplay(Logger);
+            SceneManager.sceneUnloaded += onSceneUnloaded;
             harmony = new Harmony(PluginId);
             harmony.PatchAll(typeof(AdvancedSarPlugin).Assembly);
             Logger.LogInfo("Advanced SAR loaded.");
@@ -33,10 +36,19 @@ namespace AdvancedSar
 
         private void OnDisable()
         {
+            SceneManager.sceneUnloaded -= onSceneUnloaded;
             harmony?.UnpatchSelf();
+            harmony = null;
             SarOrders.clearAssignments();
             display?.Dispose();
             display = null;
+        }
+
+        private static void onSceneUnloaded(Scene scene)
+        {
+            display?.pruneStale();
+            if (!ObjectsManager.InstanceExists(false))
+                SarOrders.clearAssignments();
         }
 
         [HarmonyPatch(typeof(MapDrawToolbarView), MethodType.Constructor)]

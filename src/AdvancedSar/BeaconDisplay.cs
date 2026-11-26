@@ -98,12 +98,52 @@ namespace AdvancedSar
                 if (ReferenceEquals(current.model, model))
                     return;
 
-                current.layer.clear();
-                maps.Remove(map);
+                removeMap(map);
             }
 
             if (model != null)
+            {
+                map.Unloaded += onMapUnloaded;
                 maps.Add(map, (model, new BeaconLayer(map, darkBrush)));
+            }
+        }
+
+        internal void pruneStale()
+        {
+            var staleMaps = new List<MapBase>();
+            foreach (var map in maps.Keys)
+            {
+                if (!map.IsLoaded)
+                    staleMaps.Add(map);
+            }
+
+            foreach (var map in staleMaps)
+                removeMap(map);
+
+            var staleToolbars = new List<MapDrawToolbarView>();
+            foreach (var view in buttons.Keys)
+            {
+                if (!view.IsLoaded)
+                    staleToolbars.Add(view);
+            }
+
+            foreach (var view in staleToolbars)
+                removeToolbar(view);
+        }
+
+        private void onMapUnloaded(object sender, RoutedEventArgs args)
+        {
+            removeMap((MapBase)sender);
+        }
+
+        private void removeMap(MapBase map)
+        {
+            if (!maps.TryGetValue(map, out var entry))
+                return;
+
+            map.Unloaded -= onMapUnloaded;
+            entry.layer.clear();
+            maps.Remove(map);
         }
 
         internal void refresh(float time)
@@ -258,14 +298,21 @@ namespace AdvancedSar
             foreach (var entry in buttons.Values)
                 removeButtons(entry.toolbar, entry.beaconButton, entry.enemyButton);
 
-            foreach (var entry in maps.Values)
-                entry.layer.clear();
+            foreach (var pair in maps)
+            {
+                pair.Key.Unloaded -= onMapUnloaded;
+                pair.Value.layer.clear();
+            }
 
             buttons.Clear();
             maps.Clear();
+            beacons.Clear();
 
             if (iconTexture != null)
                 UnityEngine.Object.Destroy(iconTexture);
+
+            iconTexture = null;
+            iconMask = null;
         }
     }
 }

@@ -44,7 +44,9 @@ namespace AdvancedSar
             while (markers.Count > beacons.Count)
             {
                 int last = markers.Count - 1;
-                panel.Children.Remove(markers[last].element);
+                var element = markers[last].element;
+                ToolTipService.SetToolTip(element, null);
+                panel.Children.Remove(element);
                 markers.RemoveAt(last);
             }
 
@@ -97,6 +99,11 @@ namespace AdvancedSar
             if (panel == null)
                 return;
 
+            foreach (var marker in markers)
+                ToolTipService.SetToolTip(marker.element, null);
+
+            panel.Children.Clear();
+            panel.ParentMap = null;
             map.Children.Remove(panel);
             panel = null;
             markers.Clear();
