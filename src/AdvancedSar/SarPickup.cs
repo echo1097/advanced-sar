@@ -40,7 +40,8 @@ namespace AdvancedSar
             Departure,
             Descend,
             Pickup,
-            Hover
+            Hover,
+            Holding
         }
 
         private sealed class Assignment
@@ -69,6 +70,10 @@ namespace AdvancedSar
             internal float lastHoverHeight;
             internal double heightStableSince;
             internal bool risky;
+            internal bool hasTurn;
+            internal long turnOrder;
+            internal int holdSlot;
+            internal bool holdReached;
 
             internal Assignment(Helicopter helicopter, ObjectBase raft, GoToWaypointTask waypoint, float approachHeading,
                 RelationsState survivorRelation)
@@ -141,7 +146,9 @@ namespace AdvancedSar
                 if (!sarWaypoints.TryGetValue(__instance, out var assignment))
                     return true;
 
-                assignment.helicopter.CommandPosition = assignment.stage == SarStage.Hover
+                bool hovering = assignment.stage == SarStage.Hover ||
+                    (assignment.stage == SarStage.Holding && assignment.holdReached);
+                assignment.helicopter.CommandPosition = hovering
                     ? (GeoPosition?)null
                     : __instance.WaypointPosition;
                 return false;
@@ -230,6 +237,13 @@ namespace AdvancedSar
             if (assignment.stage == SarStage.Transit &&
                 (nearRaft || crossedRadius(previous, position, target, descentDistanceNmi)))
             {
+                if (!assignment.hasTurn && isRaftBusy(assignment))
+                {
+                    startHolding(assignment, position, raft, missionTime);
+                    return;
+                }
+
+                assignment.hasTurn = true;
                 assignment.savedAltitude ??= (float)position._height;
                 helicopter.DesiredAltitude.Value = lowAltitude(assignment);
                 assignment.stage = SarStage.Descend;
@@ -304,9 +318,15 @@ namespace AdvancedSar
                 return;
             }
 
-            if (!hasRoom(helicopter) || !hasActiveRaft(assignment, activeRafts))
+            if (!hasRoom(helicopter) || !hasActiveRaft(assignment, activeRafts) || isCoveredByOthers(assignment))
             {
                 continueSar(index);
+                return;
+            }
+
+            if (assignment.stage == SarStage.Holding)
+            {
+                updateHolding(assignment, missionTime);
                 return;
             }
 
@@ -437,7 +457,16 @@ namespace AdvancedSar
         private static void skipRaft(Assignment assignment)
         {
             assignment.skippedRafts ??= new HashSet<ObjectBase>();
+            pruneSkippedRafts(assignment.skippedRafts);
             assignment.skippedRafts.Add(assignment.raft);
+        }
+
+        private static void pruneSkippedRafts(HashSet<ObjectBase> skippedRafts)
+        {
+            if (skippedRafts == null || skippedRafts.Count == 0)
+                return;
+
+            skippedRafts.RemoveWhere(raft => raft == null || raft.IsDestroyed || raft.IsDespawned);
         }
     }
 }

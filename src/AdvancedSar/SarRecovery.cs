@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection.Emit;
 using HarmonyLib;
 using SeaPower;
 using UnityEngine;
@@ -24,6 +25,8 @@ namespace AdvancedSar
             internal RelationsState survivorRelation;
             internal HashSet<ObjectBase> skippedRafts;
             internal string recoveryId;
+            internal bool shipLaunch;
+            internal bool awaitingLaunch => shipLaunch || recoveryId != null;
             internal string loadoutName;
             internal int callsignIndex;
             internal int survivors;
@@ -33,6 +36,9 @@ namespace AdvancedSar
             internal float fullRange;
             internal bool unlimitedFuel;
             internal bool healthy;
+            internal float waypointTolerance;
+            internal bool emcon;
+            internal ObjectBase.WeaponStatus weaponStatus;
             internal float cooldownDuration;
             internal double landedAt;
             internal bool cooldownSkipped;
@@ -41,6 +47,10 @@ namespace AdvancedSar
             internal PendingLaunchTask pending;
             internal LaunchTaskParameters launchParameters;
             internal List<LaunchWaypoint> launchWaypoints;
+            internal HelicopterLanding deckStop;
+            internal double nextDeckEvent;
+            internal int unloaded;
+            internal bool readyToDepart;
         }
 
         private sealed class LaunchWaypoint
@@ -125,11 +135,15 @@ namespace AdvancedSar
                 return;
             }
 
+            pruneSkippedRafts(assignment.skippedRafts);
             recoveries.Add(new Recovery
             {
                 helicopter = helicopter,
                 home = home,
                 deck = home._obp._flightDeck,
+                waypointTolerance = helicopter._obp._waypointTolerance,
+                emcon = helicopter.Emcon.Value,
+                weaponStatus = helicopter._weaponStatus,
                 survivorRelation = assignment.survivorRelation,
                 skippedRafts = assignment.skippedRafts
             });
@@ -141,26 +155,46 @@ namespace AdvancedSar
 
         internal static void updateRecoveries(float realTime)
         {
-            if (recoveries.Count == 0 || (realTime >= lastRecoveryCheck && realTime - lastRecoveryCheck < 0.5f))
+            if (recoveries.Count == 0)
                 return;
 
-            lastRecoveryCheck = realTime;
+            bool checkRecovery = realTime < lastRecoveryCheck || realTime - lastRecoveryCheck >= 0.5f;
+            if (checkRecovery)
+                lastRecoveryCheck = realTime;
+
             for (int index = recoveries.Count - 1; index >= 0; index--)
             {
                 var recovery = recoveries[index];
+                if (recovery.deckStop != null)
+                {
+                    updateDeckStop(index, recovery);
+                    continue;
+                }
+
+                if (!checkRecovery)
+                    continue;
+
                 if (!isAvailableHome(recovery.home))
                 {
                     removeRecovery(index, true);
                     continue;
                 }
 
-                if (recovery.recoveryId == null)
+                if (!recovery.awaitingLaunch)
                 {
                     var helicopter = recovery.helicopter;
-                    var order = helicopter != null ? helicopter.CurrentOrder.Value : null;
                     if (helicopter == null || helicopter.IsDestroyed || helicopter.IsDespawned)
+                    {
                         removeRecovery(index, false);
-                    else if (order != null && order.OrderType != Order.Type.None && order.OrderType != Order.Type.ReturnToBase)
+                        continue;
+                    }
+
+                    var order = helicopter.CurrentOrder.Value;
+                    bool redirected = order != null && order.OrderType != Order.Type.None &&
+                        order.OrderType != Order.Type.ReturnToBase;
+                    bool returnCanceled = (order == null || order.OrderType == Order.Type.None) &&
+                        !helicopter._isLanding && !hasActiveDeckTask(recovery.deck, helicopter);
+                    if (redirected || returnCanceled)
                     {
                         removeRecovery(index, false);
                         if (canReceiveSarOrders(helicopter))
@@ -172,6 +206,12 @@ namespace AdvancedSar
                 if (recovery.helicopter != null)
                 {
                     resumeAfterTakeoff(index);
+                    continue;
+                }
+
+                if (recovery.shipLaunch)
+                {
+                    removeRecovery(index, false);
                     continue;
                 }
 
@@ -197,6 +237,23 @@ namespace AdvancedSar
                 else if (entry.Available)
                     queueRecoveredHelicopter(index, entry);
             }
+        }
+
+        private static bool hasActiveDeckTask(FlightDeck deck, Helicopter helicopter)
+        {
+            foreach (var task in deck.FlightDeckTasks)
+            {
+                if (!task._isCancelled && task.Vehicle == helicopter && !deck._flightDeckTasksToRemove.Contains(task))
+                    return true;
+            }
+
+            foreach (var task in deck._flightDeckTasksToAdd)
+            {
+                if (!task._isCancelled && task.Vehicle == helicopter)
+                    return true;
+            }
+
+            return false;
         }
 
         private static AircraftRecoveryInventory.Entry findRecoveryEntry(Recovery recovery)
@@ -320,6 +377,7 @@ namespace AdvancedSar
                 return;
             }
 
+            pruneSkippedRafts(recovery.skippedRafts);
             var target = findReachableSarTarget(helicopter, recovery.survivorRelation, out _, recovery.skippedRafts);
             if (target != null)
                 startSarFlight(helicopter, target, recovery.survivorRelation, recovery.skippedRafts, afterTakeoff: true);
@@ -344,6 +402,15 @@ namespace AdvancedSar
             return false;
         }
 
+        private static void rememberLaunchWaypoints(Recovery recovery)
+        {
+            var helicopter = recovery.helicopter;
+            int count = helicopter.GetNumberOfWaypoints();
+            recovery.launchWaypoints = new List<LaunchWaypoint>(count);
+            for (int index = 1; index <= count; index++)
+                recovery.launchWaypoints.Add(new LaunchWaypoint(helicopter.GetWaypoint(index)));
+        }
+
         private static void forgetLaunch(Recovery recovery)
         {
             if (recovery.launchParameters != null)
@@ -356,13 +423,211 @@ namespace AdvancedSar
         private static void removeRecovery(int index, bool abortLaunch)
         {
             var recovery = recoveries[index];
+            if (recovery.deckStop != null)
+                endDeckStop(recovery);
+
             if (abortLaunch && recovery.pending != null && recovery.helicopter == null &&
                 recovery.home != null && !recovery.home.IsDestroyed && !recovery.home.IsDespawned &&
+                recovery.deck != null && recovery.deck.FlightDeckTasks != null &&
                 recovery.deck.FlightDeckTasks.Contains(recovery.pending))
                 recovery.deck.abortLaunchTask(recovery.pending._uid, false);
 
             forgetLaunch(recovery);
             recoveries.RemoveAt(index);
+        }
+
+        private static void offloadSurvivors(Recovery recovery, Helicopter helicopter, int survivors)
+        {
+            if (survivors <= 0)
+                return;
+
+            var onBoard = helicopter._obp.CurrentTransportedOnBoard;
+            onBoard.Value = Math.Max(0, onBoard.Value - survivors);
+            reportOffload(recovery, helicopter, survivors);
+        }
+
+        private static void reportOffload(Recovery recovery, Helicopter helicopter, int survivors)
+        {
+            string helicopterName = System.Security.SecurityElement.Escape(helicopter.Name.Value);
+            reportStatus(recovery.home, $"Received {survivorCount(survivors)} from {helicopterName}.");
+            recovery.home.ShowOrderFeedback($"SAR dropped off {survivors} survivors", 5f);
+        }
+
+        [HarmonyPatch(typeof(HelicopterLanding), "onFixedUpdate")]
+        private static class SarTouchdownPatch
+        {
+            private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+            {
+                var stopRotors = AccessTools.Method(typeof(HelicopterFlightControlSystem), "stopRotors");
+                var touchdown = AccessTools.Method(typeof(SarTouchdownPatch), nameof(handleTouchdown));
+                foreach (var instruction in instructions)
+                {
+                    if (instruction.Calls(stopRotors))
+                    {
+                        yield return new CodeInstruction(OpCodes.Ldarg_0);
+                        yield return new CodeInstruction(OpCodes.Call, touchdown);
+                    }
+                    else
+                        yield return instruction;
+                }
+            }
+
+            private static void handleTouchdown(HelicopterFlightControlSystem controls, HelicopterLanding landing)
+            {
+                if (!beginDeckStop(landing))
+                    controls.stopRotors();
+            }
+        }
+
+        private static bool beginDeckStop(HelicopterLanding landing)
+        {
+            var task = landing._flightDeckTask;
+            if (!(task.Vehicle is Helicopter helicopter) || task._isCancelled ||
+                task._forceRecoveryMode != FlightDeckTask.ForceRecoveryMode.None)
+                return false;
+
+            var deck = task._flightDeck;
+            int index = recoveries.FindIndex(item => item.helicopter == helicopter && item.deck == deck &&
+                !item.awaitingLaunch);
+            if (index < 0)
+                return false;
+
+            var recovery = recoveries[index];
+            int survivors = survivorsAboard(helicopter);
+            if (survivors == 0 || helicopter.EmbarkedGroundPersonnel >= helicopter._obp._transportCapacity ||
+                getDeckDepartureTarget(recovery, task) == null)
+                return false;
+
+            recovery.deckStop = landing;
+            recovery.nextDeckEvent = GameTime.missionElapsedTime + UnityEngine.Random.Range(5f, 10f) +
+                UnityEngine.Random.Range(3f, 5f);
+            return true;
+        }
+
+        private static ObjectBase getDeckDepartureTarget(Recovery recovery, FlightDeckTask task)
+        {
+            var helicopter = recovery.helicopter;
+            var deck = recovery.deck;
+            var order = helicopter.CurrentOrder.Value;
+            if (!isAvailableHome(recovery.home) || !canReceiveSarOrders(helicopter) || helicopter._userRoot == null ||
+                (order != null && order.OrderType != Order.Type.None && order.OrderType != Order.Type.ReturnToBase) ||
+                helicopter.Disabled || helicopter._overallDamage > 0 || helicopter._fuelTanksDropped ||
+                deck.LaunchesDisabled || !deck.CanOperateHelicopterInCurrentSeaState(task.VehicleType) ||
+                GameTime.missionElapsedTime - deck._lastLaunchTime <= deck._launchDelay)
+                return null;
+
+            var position = recovery.home.getGeoPosition();
+            double speed = helicopter._hp._maxSpeedSeaLevel;
+            double budget = getFuelBudgetSeconds(helicopter);
+            if (!double.IsFinite(speed) || speed <= 0 || (!helicopter._unlimitedFuel && !double.IsFinite(budget)))
+                return null;
+
+            return findSarTarget(position, position, helicopter._taskforce, recovery.survivorRelation, helicopter,
+                speed, budget, recovery.skippedRafts, null, out _, extraDistanceNmi: 2 * departureWaypointNmi);
+        }
+
+        private static void endDeckStop(Recovery recovery)
+        {
+            var landing = recovery.deckStop;
+            var helicopter = recovery.helicopter;
+            recovery.deckStop = null;
+            if (helicopter == null || helicopter.IsDestroyed || helicopter.IsDespawned)
+                return;
+
+            if (landing._flightDeckTask?._stateMachine != null &&
+                ReferenceEquals(landing._flightDeckTask._stateMachine.CurrentState, landing) &&
+                helicopter._hfcs != null)
+                helicopter._hfcs.stopRotors();
+
+            if (!recovery.readyToDepart && recovery.unloaded > 0 && isAvailableHome(recovery.home))
+                reportOffload(recovery, helicopter, recovery.unloaded);
+        }
+
+        private static void updateDeckStop(int index, Recovery recovery)
+        {
+            var landing = recovery.deckStop;
+            var task = landing._flightDeckTask;
+            var helicopter = recovery.helicopter;
+            if (!isAvailableHome(recovery.home) || helicopter == null || helicopter.IsDestroyed || helicopter.IsDespawned)
+            {
+                removeRecovery(index, true);
+                return;
+            }
+
+            if (!ReferenceEquals(task._stateMachine.CurrentState, landing) || task._isCancelled ||
+                task._forceRecoveryMode != FlightDeckTask.ForceRecoveryMode.None)
+            {
+                endDeckStop(recovery);
+                return;
+            }
+
+            var order = helicopter.CurrentOrder.Value;
+            if (order != null && order.OrderType != Order.Type.None && order.OrderType != Order.Type.ReturnToBase)
+            {
+                removeRecovery(index, false);
+                reportStatus(helicopter, abortReport);
+                return;
+            }
+
+            double now = GameTime.missionElapsedTime;
+            while (now >= recovery.nextDeckEvent)
+            {
+                if (recovery.readyToDepart)
+                {
+                    var target = getDeckDepartureTarget(recovery, task);
+                    if (target == null)
+                        endDeckStop(recovery);
+                    else
+                        departFromDeck(index, recovery, task, target);
+                    return;
+                }
+
+                if (survivorsAboard(helicopter) > 0)
+                {
+                    helicopter._obp.CurrentTransportedOnBoard.Value--;
+                    recovery.unloaded++;
+                }
+
+                if (survivorsAboard(helicopter) > 0)
+                    recovery.nextDeckEvent += UnityEngine.Random.Range(3f, 5f);
+                else
+                {
+                    if (recovery.unloaded > 0)
+                        reportOffload(recovery, helicopter, recovery.unloaded);
+                    recovery.readyToDepart = true;
+                    recovery.nextDeckEvent += UnityEngine.Random.Range(2f, 4f);
+                }
+            }
+        }
+
+        private static void departFromDeck(int index, Recovery recovery, FlightDeckTask task, ObjectBase target)
+        {
+            var helicopter = recovery.helicopter;
+            var deck = recovery.deck;
+            recovery.deckStop = null;
+            removeRecovery(index, false);
+            task._recoveryPoint.ReleaseObject(helicopter);
+            task._recoveryPoint.Release(helicopter);
+            task._elevator?.ReleaseObject(helicopter);
+            task._elevator?.Release(helicopter);
+            task._stateMachine.setState(new FinishFlightDeckTask(task, true));
+
+            deck._launchedHelicoptersCount++;
+            deck._lastLaunchTime = GameTime.missionElapsedTime;
+            helicopter._isLanding = false;
+            helicopter._isInFlight = true;
+            helicopter.GiveControl(recovery.home.getVelocityInKnots());
+            helicopter._ignoreInCollisionAvoidanceAfterLaunch = true;
+            helicopter.setImmediateFlightConditions();
+            helicopter.PlayCodeAnimsForFlight(true);
+            helicopter.EnableColliders();
+            helicopter.IsControllable = true;
+            helicopter._obp._waypointTolerance = recovery.waypointTolerance;
+            helicopter._weaponStatus = recovery.weaponStatus;
+            helicopter.setEMCON(recovery.emcon, false);
+            helicopter._statusInfo = string.Empty;
+            pruneSkippedRafts(recovery.skippedRafts);
+            startSarFlight(helicopter, target, recovery.survivorRelation, recovery.skippedRafts, afterTakeoff: true);
         }
 
         [HarmonyPatch(typeof(DeSpawn), "onEnter")]
@@ -376,10 +641,13 @@ namespace AdvancedSar
                     !(task.Vehicle is Helicopter helicopter))
                     return;
 
-                var recovery = recoveries.Find(item => item.recoveryId == null &&
+                var recovery = recoveries.Find(item => !item.awaitingLaunch &&
                     item.helicopter == helicopter && item.deck == task._flightDeck);
                 if (recovery == null)
                     return;
+
+                if (recovery.deckStop != null)
+                    endDeckStop(recovery);
 
                 recovery.survivors = survivorsAboard(helicopter);
                 recovery.loadoutName = helicopter._obp._loadoutVariant;
@@ -403,14 +671,7 @@ namespace AdvancedSar
                 __state.recoveryId = helicopter.AircraftRecoveryId;
                 __state.helicopter = null;
                 __state.landedAt = GameTime.missionElapsedTime;
-                if (__state.survivors > 0)
-                {
-                    var onBoard = helicopter._obp.CurrentTransportedOnBoard;
-                    onBoard.Value = Math.Max(0, onBoard.Value - __state.survivors);
-                    string helicopterName = System.Security.SecurityElement.Escape(helicopter.Name.Value);
-                    reportStatus(__state.home, $"Received {survivorCount(__state.survivors)} from {helicopterName}.");
-                    __state.home.ShowOrderFeedback($"SAR dropped off {__state.survivors} survivors", 5f);
-                }
+                offloadSurvivors(__state, helicopter, __state.survivors);
 
                 foreach (var task in __state.deck._flightDeckTasksToAdd)
                 {
@@ -432,10 +693,23 @@ namespace AdvancedSar
         [HarmonyPatch(typeof(FlightDeck), nameof(FlightDeck.launchVehicle))]
         private static class SarLaunchPatch
         {
+            private static void Postfix(LaunchTaskParameters ltp, ObjectBase __result)
+            {
+                if (ltp != null && __result is Helicopter helicopter && shipLaunches.TryGetValue(ltp, out var launch))
+                    trackShipTakeoff(helicopter, launch.order);
+            }
+
             private static bool Prefix(LaunchTaskParameters ltp, out Recovery __state, ref ObjectBase __result)
             {
                 __state = launchingRecovery;
                 launchingRecovery = null;
+                if (ltp != null && shipLaunches.TryGetValue(ltp, out var launch) &&
+                    !hasShipSarRaft(launch.order.ship, launch.order.side))
+                {
+                    __result = null;
+                    return false;
+                }
+
                 if (ltp == null || !sarLaunches.TryGetValue(ltp, out var recovery))
                     return true;
 
@@ -484,19 +758,13 @@ namespace AdvancedSar
             {
                 __state = null;
                 if (____flightDeckTask.Vehicle is Helicopter helicopter && !helicopter.HasWaypoints())
-                    __state = recoveries.Find(item => item.recoveryId != null && item.helicopter == helicopter);
+                    __state = recoveries.Find(item => item.awaitingLaunch && item.helicopter == helicopter);
             }
 
             private static void Postfix(Recovery __state)
             {
-                if (__state == null)
-                    return;
-
-                var helicopter = __state.helicopter;
-                int count = helicopter.GetNumberOfWaypoints();
-                __state.launchWaypoints = new List<LaunchWaypoint>(count);
-                for (int index = 1; index <= count; index++)
-                    __state.launchWaypoints.Add(new LaunchWaypoint(helicopter.GetWaypoint(index)));
+                if (__state != null)
+                    rememberLaunchWaypoints(__state);
             }
         }
 
@@ -505,7 +773,7 @@ namespace AdvancedSar
         {
             private static void Postfix(Helicopter ____helicopter)
             {
-                int index = recoveries.FindIndex(item => item.recoveryId != null && item.helicopter == ____helicopter);
+                int index = recoveries.FindIndex(item => item.awaitingLaunch && item.helicopter == ____helicopter);
                 if (index >= 0 && isAvailableHome(recoveries[index].home))
                     resumeAfterTakeoff(index);
             }

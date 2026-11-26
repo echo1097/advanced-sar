@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using BepInEx.Logging;
 using HarmonyLib;
 using SeaPower;
 using SeapowerUI.ViewModels;
@@ -20,11 +21,13 @@ namespace AdvancedSar
         private static readonly List<Assignment> assignments = new List<Assignment>();
         private const string abortReport = "Rodger, aborting SAR.";
         private static double lastRouteCheck;
+        internal static ManualLogSource logger;
 
         private static void Postfix(ObjectBaseViewModel __instance, TrulyObservableCollection<ContextMenuItem> __result)
         {
-            if (!(__instance._objectBase is Helicopter helicopter) || helicopter == null ||
-                helicopter._taskforce == null || !helicopter.AcceptsOrdersFromPlayer)
+            var unit = __instance._objectBase;
+            if (unit == null || unit._taskforce == null || !unit.AcceptsOrdersFromPlayer ||
+                (!(unit is Helicopter) && !(unit is Vessel && isAvailableHome(unit))))
                 return;
 
             string ordersLabel = LanguageResourceHandler.Instance.getText("ContextMenu", "Orders", true, true);
@@ -36,14 +39,23 @@ namespace AdvancedSar
                 var sarItems = new TrulyObservableCollection<ContextMenuItem>
                 {
                     new ContextMenuItem("Begin SAR",
-                        command: new DelegateCommand(_ => beginSar(helicopter, RelationsState.Friendly))),
+                        command: new DelegateCommand(_ => beginUnitSar(unit, RelationsState.Friendly))),
                     new ContextMenuItem("Begin SAR for\nEnemy Survivors",
-                        command: new DelegateCommand(_ => beginSar(helicopter, RelationsState.Hostile))),
-                    new ContextMenuItem("Cancel SAR", command: new DelegateCommand(_ => cancelSar(helicopter)))
+                        command: new DelegateCommand(_ => beginUnitSar(unit, RelationsState.Hostile)))
                 };
+                if (unit is Helicopter helicopter)
+                    sarItems.Add(new ContextMenuItem("Cancel SAR", command: new DelegateCommand(_ => cancelSar(helicopter))));
                 menuItem.Items.Add(new ContextMenuItem("Search & Rescue", items: sarItems));
                 return;
             }
+        }
+
+        private static void beginUnitSar(ObjectBase unit, RelationsState survivorRelation)
+        {
+            if (unit is Helicopter helicopter)
+                beginSar(helicopter, survivorRelation);
+            else if (isAvailableHome(unit) && unit.AcceptsOrdersFromPlayer)
+                beginShipSar(unit, survivorRelation);
         }
 
         private static void beginSar(Helicopter helicopter, RelationsState survivorRelation)
@@ -65,7 +77,7 @@ namespace AdvancedSar
                 if (failureMessage != null)
                     showUnableToComply(helicopter, failureMessage);
                 else
-                    helicopter.ShowOrderFeedback($"No unassigned {survivorSide(survivorRelation)} life rafts found", 5f);
+                    helicopter.ShowOrderFeedback($"No {survivorSide(survivorRelation)} life rafts need a helicopter", 5f);
 
                 return;
             }
@@ -119,6 +131,7 @@ namespace AdvancedSar
 
             var assignment = new Assignment(helicopter, target, waypoint, approachHeading, survivorRelation);
             assignment.skippedRafts = skippedRafts;
+            joinRaftQueue(assignment);
             assignments.Add(assignment);
             assignment.watchPickups();
             sarWaypoints.Add(waypoint, assignment);
@@ -163,6 +176,16 @@ namespace AdvancedSar
 
         internal static void updateRoutes(float realTime)
         {
+            if (!ObjectsManager.InstanceExists(false))
+            {
+                if (assignments.Count > 0 || sarWaypoints.Count > 0 || raftDepartures.Count > 0 ||
+                    recoveries.Count > 0 || sarLaunches.Count > 0 || shipLaunches.Count > 0 ||
+                    coolingHelicopters.Count > 0)
+                    clearAssignments();
+                return;
+            }
+
+            updateDepartures(realTime);
             if (assignments.Count == 0)
                 return;
 
@@ -176,7 +199,7 @@ namespace AdvancedSar
                 lastRouteCheck = missionTime;
 
             refreshAssignments();
-            if (assignments.Count == 0 || !ObjectsManager.InstanceExists(false))
+            if (assignments.Count == 0)
                 return;
 
             var activeRafts = ObjectsManager.Instance._listOfAllRafts;
@@ -197,15 +220,47 @@ namespace AdvancedSar
         internal static void clearAssignments()
         {
             for (int index = assignments.Count - 1; index >= 0; index--)
+                tryEndAssignment(index);
+
+            for (int index = recoveries.Count - 1; index >= 0; index--)
+                tryRemoveRecovery(index);
+
+            foreach (var leftover in assignments)
+                leftover.pickupSubscription?.Dispose();
+
+            clearShipOrders();
+            assignments.Clear();
+            sarWaypoints.Clear();
+            raftDepartures.Clear();
+            recoveries.Clear();
+            sarLaunches.Clear();
+        }
+
+        private static void tryEndAssignment(int index)
+        {
+            try
             {
                 if (hasUnchangedWaypoint(assignments[index]))
                     endSar(index, null);
                 else
                     releaseAssignment(index);
             }
+            catch (Exception error)
+            {
+                logger?.LogWarning($"Advanced SAR could not cleanly end a SAR assignment: {error.Message}");
+            }
+        }
 
-            for (int index = recoveries.Count - 1; index >= 0; index--)
+        private static void tryRemoveRecovery(int index)
+        {
+            try
+            {
                 removeRecovery(index, true);
+            }
+            catch (Exception error)
+            {
+                logger?.LogWarning($"Advanced SAR could not cleanly end a SAR recovery: {error.Message}");
+            }
         }
 
         private static void continueSar(int index, bool justClearedShip = false)
@@ -218,6 +273,7 @@ namespace AdvancedSar
                 return;
             }
 
+            leaveRaft(assignment);
             assignment.raft = null;
             var target = findReachableSarTarget(helicopter, assignment.survivorRelation, out string failureMessage,
                 assignment.skippedRafts);
@@ -235,6 +291,7 @@ namespace AdvancedSar
         {
             var helicopter = assignment.helicopter;
             assignment.raft = target;
+            joinRaftQueue(assignment);
             assignment.retried = false;
             var raftPosition = target.getGeoPosition();
             var origin = helicopter.getGeoPosition();
@@ -282,7 +339,8 @@ namespace AdvancedSar
         private static void releaseAssignment(int index)
         {
             var assignment = assignments[index];
-            assignment.pickupSubscription.Dispose();
+            leaveRaft(assignment);
+            assignment.pickupSubscription?.Dispose();
             restorePickupPermission(assignment);
             if (assignment.waypoint != null)
                 sarWaypoints.Remove(assignment.waypoint);
@@ -393,8 +451,10 @@ namespace AdvancedSar
                 return null;
 
             ObjectBase bestRaft = null;
+            bool bestShared = false;
             int fewestSurvivors = int.MaxValue;
             double bestDistance = double.PositiveInfinity;
+            var mine = helicopter == null ? null : assignments.Find(assignment => assignment.helicopter == helicopter);
 
             foreach (var raft in ObjectsManager.Instance._listOfAllRafts)
             {
@@ -402,11 +462,13 @@ namespace AdvancedSar
                     continue;
 
                 int survivors = getEligibleSurvivorCount(raft, taskforce, survivorRelation);
-                if (survivors <= 0 || survivors > fewestSurvivors)
+                if (survivors <= 0 || skippedRafts?.Contains(raft) == true)
                     continue;
 
-                if (skippedRafts?.Contains(raft) == true ||
-                    assignments.Exists(assignment => assignment.raft == raft && assignment.helicopter != helicopter))
+                int seatsComing = seatsAhead(raft, mine);
+                bool shared = seatsComing > 0;
+                survivors -= seatsComing;
+                if (survivors <= 0)
                     continue;
 
                 var raftPosition = raft.getGeoPosition();
@@ -422,9 +484,18 @@ namespace AdvancedSar
                     continue;
                 }
 
-                if (survivors < fewestSurvivors || distance < bestDistance)
+                bool better = bestRaft == null;
+                if (!better && shared != bestShared)
+                    better = !shared;
+                else if (!better && survivors != fewestSurvivors)
+                    better = survivors < fewestSurvivors;
+                else if (!better)
+                    better = distance < bestDistance;
+
+                if (better)
                 {
                     bestRaft = raft;
+                    bestShared = shared;
                     fewestSurvivors = survivors;
                     bestDistance = distance;
                 }
