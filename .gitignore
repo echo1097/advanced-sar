@@ -5,3 +5,5 @@
 **/obj/
 /dist/
 devlog.md
+workshop/local.json
+**/__pycache__/
