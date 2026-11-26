@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using BepInEx.Logging;
 using HarmonyLib;
 using SeaPower;
 using SeapowerUI.ViewModels;
@@ -20,6 +21,7 @@ namespace AdvancedSar
         private static readonly List<Assignment> assignments = new List<Assignment>();
         private const string abortReport = "Rodger, aborting SAR.";
         private static double lastRouteCheck;
+        internal static ManualLogSource logger;
 
         private static void Postfix(ObjectBaseViewModel __instance, TrulyObservableCollection<ContextMenuItem> __result)
         {
@@ -217,62 +219,47 @@ namespace AdvancedSar
 
         internal static void clearAssignments()
         {
+            for (int index = assignments.Count - 1; index >= 0; index--)
+                tryEndAssignment(index);
+
+            for (int index = recoveries.Count - 1; index >= 0; index--)
+                tryRemoveRecovery(index);
+
+            foreach (var leftover in assignments)
+                leftover.pickupSubscription?.Dispose();
+
+            clearShipOrders();
+            assignments.Clear();
+            sarWaypoints.Clear();
+            raftDepartures.Clear();
+            recoveries.Clear();
+            sarLaunches.Clear();
+        }
+
+        private static void tryEndAssignment(int index)
+        {
             try
             {
-                clearShipOrders();
-                for (int index = assignments.Count - 1; index >= 0; index--)
-                {
-                    try
-                    {
-                        if (hasUnchangedWaypoint(assignments[index]))
-                            endSar(index, null);
-                        else
-                            releaseAssignment(index);
-                    }
-                    catch (Exception)
-                    {
-                        if (index < assignments.Count)
-                        {
-                            var assignment = assignments[index];
-                            try
-                            {
-                                assignment.pickupSubscription?.Dispose();
-                            }
-                            catch (Exception)
-                            {
-                            }
-
-                            if (assignment.waypoint != null)
-                                sarWaypoints.Remove(assignment.waypoint);
-                            assignments.RemoveAt(index);
-                        }
-                    }
-                }
-
-                for (int index = recoveries.Count - 1; index >= 0; index--)
-                {
-                    try
-                    {
-                        removeRecovery(index, true);
-                    }
-                    catch (Exception)
-                    {
-                        if (index < recoveries.Count)
-                        {
-                            forgetLaunch(recoveries[index]);
-                            recoveries.RemoveAt(index);
-                        }
-                    }
-                }
+                if (hasUnchangedWaypoint(assignments[index]))
+                    endSar(index, null);
+                else
+                    releaseAssignment(index);
             }
-            finally
+            catch (Exception error)
             {
-                clearShipOrders();
-                assignments.Clear();
-                sarWaypoints.Clear();
-                raftDepartures.Clear();
-                recoveries.Clear();
-                sarLaunches.Clear();
+                logger?.LogWarning($"Advanced SAR could not cleanly end a SAR assignment: {error.Message}");
+            }
+        }
+
+        private static void tryRemoveRecovery(int index)
+        {
+            try
+            {
+                removeRecovery(index, true);
+            }
+            catch (Exception error)
+            {
+                logger?.LogWarning($"Advanced SAR could not cleanly end a SAR recovery: {error.Message}");
             }
         }
 

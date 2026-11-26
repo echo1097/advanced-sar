@@ -20,6 +20,7 @@ namespace AdvancedSar
         private void OnEnable()
         {
             display = new BeaconDisplay(Logger);
+            SarOrders.logger = Logger;
             SceneManager.sceneUnloaded += onSceneUnloaded;
             harmony = new Harmony(PluginId);
             harmony.PatchAll(typeof(AdvancedSarPlugin).Assembly);
