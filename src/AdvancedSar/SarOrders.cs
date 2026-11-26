@@ -174,6 +174,14 @@ namespace AdvancedSar
 
         internal static void updateRoutes(float realTime)
         {
+            if (!ObjectsManager.InstanceExists(false))
+            {
+                if (assignments.Count > 0 || raftDepartures.Count > 0)
+                    clearAssignments();
+                return;
+            }
+
+            updateDepartures(realTime);
             if (assignments.Count == 0)
                 return;
 
@@ -187,7 +195,7 @@ namespace AdvancedSar
                 lastRouteCheck = missionTime;
 
             refreshAssignments();
-            if (assignments.Count == 0 || !ObjectsManager.InstanceExists(false))
+            if (assignments.Count == 0)
                 return;
 
             var activeRafts = ObjectsManager.Instance._listOfAllRafts;
@@ -208,7 +216,6 @@ namespace AdvancedSar
         internal static void clearAssignments()
         {
             clearShipOrders();
-            raftDepartures.Clear();
             for (int index = assignments.Count - 1; index >= 0; index--)
             {
                 if (hasUnchangedWaypoint(assignments[index]))
@@ -216,6 +223,8 @@ namespace AdvancedSar
                 else
                     releaseAssignment(index);
             }
+
+            raftDepartures.Clear();
 
             for (int index = recoveries.Count - 1; index >= 0; index--)
                 removeRecovery(index, true);

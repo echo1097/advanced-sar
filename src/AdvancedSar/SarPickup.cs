@@ -457,7 +457,16 @@ namespace AdvancedSar
         private static void skipRaft(Assignment assignment)
         {
             assignment.skippedRafts ??= new HashSet<ObjectBase>();
+            pruneSkippedRafts(assignment.skippedRafts);
             assignment.skippedRafts.Add(assignment.raft);
+        }
+
+        private static void pruneSkippedRafts(HashSet<ObjectBase> skippedRafts)
+        {
+            if (skippedRafts == null || skippedRafts.Count == 0)
+                return;
+
+            skippedRafts.RemoveWhere(raft => raft == null || raft.IsDestroyed || raft.IsDespawned);
         }
     }
 }

@@ -135,6 +135,7 @@ namespace AdvancedSar
                 return;
             }
 
+            pruneSkippedRafts(assignment.skippedRafts);
             recoveries.Add(new Recovery
             {
                 helicopter = helicopter,
@@ -351,6 +352,7 @@ namespace AdvancedSar
                 return;
             }
 
+            pruneSkippedRafts(recovery.skippedRafts);
             var target = findReachableSarTarget(helicopter, recovery.survivorRelation, out _, recovery.skippedRafts);
             if (target != null)
                 startSarFlight(helicopter, target, recovery.survivorRelation, recovery.skippedRafts, afterTakeoff: true);
@@ -596,6 +598,7 @@ namespace AdvancedSar
             helicopter._weaponStatus = recovery.weaponStatus;
             helicopter.setEMCON(recovery.emcon, false);
             helicopter._statusInfo = string.Empty;
+            pruneSkippedRafts(recovery.skippedRafts);
             startSarFlight(helicopter, target, recovery.survivorRelation, recovery.skippedRafts, afterTakeoff: true);
         }
 

@@ -9,11 +9,13 @@ namespace AdvancedSar
         private const double clearDistanceNmi = 0.3;
         private const double clearSeconds = 60;
         private const double holdExitNmi = 0.3;
+        private const float departurePruneInterval = 1f;
         private static readonly float[] holdOffsets = { 60, -60, 120, -120, 180 };
 
         private static readonly Dictionary<ObjectBase, Departure> raftDepartures =
             new Dictionary<ObjectBase, Departure>();
         private static long turnSequence;
+        private static float lastDeparturePrune;
 
         private sealed class Departure
         {
@@ -75,7 +77,9 @@ namespace AdvancedSar
 
         private static void leaveRaft(Assignment assignment)
         {
-            if (assignment.hasTurn && assignment.raft != null)
+            if (assignment.hasTurn && assignment.raft != null && !assignment.raft.IsDestroyed &&
+                !assignment.raft.IsDespawned && assignment.helicopter != null && !assignment.helicopter.IsDestroyed &&
+                !assignment.helicopter.IsDespawned && assignment.helicopter._isInFlight)
             {
                 double now = GameTime.missionElapsedTime;
                 pruneDepartures(now);
@@ -86,13 +90,35 @@ namespace AdvancedSar
             assignment.holdReached = false;
         }
 
+        private static void updateDepartures(float realTime)
+        {
+            if (raftDepartures.Count == 0)
+                return;
+
+            if (!ObjectsManager.InstanceExists(false))
+            {
+                raftDepartures.Clear();
+                return;
+            }
+
+            if (realTime >= lastDeparturePrune && realTime - lastDeparturePrune < departurePruneInterval)
+                return;
+
+            lastDeparturePrune = realTime;
+            pruneDepartures(GameTime.missionElapsedTime);
+        }
+
         private static void pruneDepartures(double now)
         {
             var stale = new List<ObjectBase>();
             foreach (var item in raftDepartures)
             {
-                if (now < item.Value.leftAt || now - item.Value.leftAt >= clearSeconds)
-                    stale.Add(item.Key);
+                var raft = item.Key;
+                var helicopter = item.Value.helicopter;
+                if (raft == null || raft.IsDestroyed || raft.IsDespawned ||
+                    helicopter == null || helicopter.IsDestroyed || helicopter.IsDespawned || !helicopter._isInFlight ||
+                    now < item.Value.leftAt || now - item.Value.leftAt >= clearSeconds)
+                    stale.Add(raft);
             }
 
             foreach (var raft in stale)
