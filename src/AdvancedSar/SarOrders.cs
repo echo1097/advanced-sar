@@ -35,7 +35,10 @@ namespace AdvancedSar
 
                 var sarItems = new TrulyObservableCollection<ContextMenuItem>
                 {
-                    new ContextMenuItem("Begin SAR", command: new DelegateCommand(_ => beginSar(helicopter))),
+                    new ContextMenuItem("Begin SAR",
+                        command: new DelegateCommand(_ => beginSar(helicopter, RelationsState.Friendly))),
+                    new ContextMenuItem("Begin SAR for\nEnemy Survivors",
+                        command: new DelegateCommand(_ => beginSar(helicopter, RelationsState.Hostile))),
                     new ContextMenuItem("Cancel SAR", command: new DelegateCommand(_ => cancelSar(helicopter)))
                 };
                 menuItem.Items.Add(new ContextMenuItem("Search & Rescue", items: sarItems));
@@ -43,7 +46,7 @@ namespace AdvancedSar
             }
         }
 
-        private static void beginSar(Helicopter helicopter)
+        private static void beginSar(Helicopter helicopter, RelationsState survivorRelation)
         {
             if (!canReceiveSarOrders(helicopter))
                 return;
@@ -56,19 +59,26 @@ namespace AdvancedSar
                 return;
             }
 
-            var target = findReachableSarTarget(helicopter, out string failureMessage);
+            var target = findReachableSarTarget(helicopter, survivorRelation, out string failureMessage);
             if (target == null)
             {
                 if (failureMessage != null)
                     showUnableToComply(helicopter, failureMessage);
                 else
-                    helicopter.ShowOrderFeedback("No unassigned friendly life rafts found", 5f);
+                    helicopter.ShowOrderFeedback($"No unassigned {survivorSide(survivorRelation)} life rafts found", 5f);
 
                 return;
             }
 
-            startSarFlight(helicopter, target, null);
-            reportStatus(helicopter, "Starting SAR.");
+            startSarFlight(helicopter, target, survivorRelation, null);
+            reportStatus(helicopter, survivorRelation == RelationsState.Hostile
+                ? "Starting SAR for enemy survivors."
+                : "Starting SAR.");
+        }
+
+        private static string survivorSide(RelationsState survivorRelation)
+        {
+            return survivorRelation == RelationsState.Hostile ? "enemy" : "friendly";
         }
 
         private static void reportStatus(ObjectBase unit, string message)
@@ -81,8 +91,8 @@ namespace AdvancedSar
             return count == 1 ? "1 survivor" : $"{count} survivors";
         }
 
-        private static void startSarFlight(Helicopter helicopter, ObjectBase target, HashSet<ObjectBase> skippedRafts,
-            bool afterTakeoff = false)
+        private static void startSarFlight(Helicopter helicopter, ObjectBase target, RelationsState survivorRelation,
+            HashSet<ObjectBase> skippedRafts, bool afterTakeoff = false)
         {
             var origin = helicopter.getGeoPosition();
             var raftPosition = target.getGeoPosition();
@@ -107,7 +117,7 @@ namespace AdvancedSar
             if (assignments.Count == 0)
                 lastRouteCheck = GameTime.missionElapsedTime;
 
-            var assignment = new Assignment(helicopter, target, waypoint, approachHeading);
+            var assignment = new Assignment(helicopter, target, waypoint, approachHeading, survivorRelation);
             assignment.skippedRafts = skippedRafts;
             assignments.Add(assignment);
             assignment.watchPickups();
@@ -209,10 +219,11 @@ namespace AdvancedSar
             }
 
             assignment.raft = null;
-            var target = findReachableSarTarget(helicopter, out string failureMessage, assignment.skippedRafts);
+            var target = findReachableSarTarget(helicopter, assignment.survivorRelation, out string failureMessage,
+                assignment.skippedRafts);
             if (target == null)
             {
-                returnHome(index, failureMessage ?? "No reachable friendly life rafts");
+                returnHome(index, failureMessage ?? $"No reachable {survivorSide(assignment.survivorRelation)} life rafts");
                 return;
             }
 
@@ -336,12 +347,12 @@ namespace AdvancedSar
 
         private static bool hasActiveRaft(Assignment assignment, List<ObjectBase> activeRafts)
         {
-            return getFriendlySurvivorCount(assignment.raft, assignment.helicopter._taskforce) > 0 &&
+            return getEligibleSurvivorCount(assignment.raft, assignment.helicopter._taskforce, assignment.survivorRelation) > 0 &&
                 activeRafts.Contains(assignment.raft);
         }
 
-        private static ObjectBase findReachableSarTarget(Helicopter helicopter, out string failureMessage,
-            HashSet<ObjectBase> skippedRafts = null, ObjectBase retryRaft = null)
+        private static ObjectBase findReachableSarTarget(Helicopter helicopter, RelationsState survivorRelation,
+            out string failureMessage, HashSet<ObjectBase> skippedRafts = null, ObjectBase retryRaft = null)
         {
             if (!hasRoom(helicopter) || !helicopter.IsControllable || helicopter._userRoot == null)
             {
@@ -366,13 +377,14 @@ namespace AdvancedSar
             }
 
             var target = findSarTarget(helicopter.getGeoPosition(), homeBase.getGeoPosition(), helicopter._taskforce,
-                helicopter, topSpeed, secondsRemaining, skippedRafts, retryRaft, out bool hasRaftBeyondFuelRange);
+                survivorRelation, helicopter, topSpeed, secondsRemaining, skippedRafts, retryRaft,
+                out bool hasRaftBeyondFuelRange);
             failureMessage = target == null && hasRaftBeyondFuelRange ? "Insufficient fuel for a SAR round trip" : null;
             return target;
         }
 
         private static ObjectBase findSarTarget(GeoPosition origin, GeoPosition homePosition, Taskforce taskforce,
-            Helicopter helicopter, double topSpeed,
+            RelationsState survivorRelation, Helicopter helicopter, double topSpeed,
             double secondsRemaining, HashSet<ObjectBase> skippedRafts, ObjectBase retryRaft, out bool hasRaftBeyondFuelRange,
             double extraDistanceNmi = 0)
         {
@@ -389,7 +401,7 @@ namespace AdvancedSar
                 if (retryRaft != null && raft != retryRaft)
                     continue;
 
-                int survivors = getFriendlySurvivorCount(raft, taskforce);
+                int survivors = getEligibleSurvivorCount(raft, taskforce, survivorRelation);
                 if (survivors <= 0 || survivors > fewestSurvivors)
                     continue;
 
@@ -421,10 +433,10 @@ namespace AdvancedSar
             return bestRaft;
         }
 
-        private static int getFriendlySurvivorCount(ObjectBase raft, Taskforce taskforce)
+        private static int getEligibleSurvivorCount(ObjectBase raft, Taskforce taskforce, RelationsState survivorRelation)
         {
             if (raft == null || raft.IsDestroyed || raft.IsDespawned || raft._taskforce == null ||
-                taskforce.RelationshipTo(raft._taskforce) != RelationsState.Friendly)
+                taskforce.RelationshipTo(raft._taskforce) != survivorRelation)
                 return 0;
 
             return raft._obp.CurrentTransportedOnBoard.Value;

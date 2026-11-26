@@ -5,8 +5,8 @@
 ## Features
 
 - Toggle color-coded markers on the tactical map for life boats/rafts, see how many survivors are aboard each one.
-- Use **Begin SAR** and **Cancel SAR** from a helicopter's **Orders > Search & Rescue** menu.
-- Helicopters claim separate friendly rafts, prioritize rafts based on distance and survivor count, and check they have enough fuel to make the trip.
+- Use **Begin SAR** for friendly survivors or **Begin SAR for Enemy Survivors** for enemy survivors from a helicopter's **Orders > Search & Rescue** menu. **Cancel SAR** stops either order.
+- Helicopters claim separate rafts for their selected side, prioritize rafts based on distance and survivor count, and check they have enough fuel to make the trip.
 - Helicopters descend, hover for pickup, and move on to another raft if they have room and fuel.
 - Helicopters return to where they launched from (ship, airfield, etc), unload survivors, and relaunch automatically if reachable rafts remain. 
 - Helicopters with enough fuel skip the usual servicing and launch prep.

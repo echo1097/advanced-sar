@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1
+
+- Added ability to preform SAR for enemy survivors. The helicopter keeps its selected survivor type when it relaunches.
+- SAR helicopters pick up survivors ONLY from their assigned raft, including when multiple rafts are within pickup range.
+
 ## 0.6.0
 
 - When another order or waypoint takes over from SAR, the helicopter reports “Rodger, aborting SAR.” in the status terminal.

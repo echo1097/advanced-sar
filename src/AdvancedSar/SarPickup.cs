@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection.Emit;
 using HarmonyLib;
 using SeaPower;
 using UniRx;
@@ -27,6 +28,7 @@ namespace AdvancedSar
 
         private static readonly Dictionary<GoToWaypointTask, Assignment> sarWaypoints =
             new Dictionary<GoToWaypointTask, Assignment>();
+        private static readonly List<ObjectBase> noPickupRafts = new List<ObjectBase>();
         private const double settleSeconds = 15;
         private const float maxPickupHeightFeet = 55;
         private static double lastPickupCheck;
@@ -44,6 +46,7 @@ namespace AdvancedSar
         private sealed class Assignment
         {
             internal readonly Helicopter helicopter;
+            internal readonly RelationsState survivorRelation;
             internal GoToWaypointTask waypoint;
             internal HashSet<ObjectBase> skippedRafts;
             internal ObjectBase raft;
@@ -67,12 +70,14 @@ namespace AdvancedSar
             internal double heightStableSince;
             internal bool risky;
 
-            internal Assignment(Helicopter helicopter, ObjectBase raft, GoToWaypointTask waypoint, float approachHeading)
+            internal Assignment(Helicopter helicopter, ObjectBase raft, GoToWaypointTask waypoint, float approachHeading,
+                RelationsState survivorRelation)
             {
                 this.helicopter = helicopter;
                 this.raft = raft;
                 this.waypoint = waypoint;
                 this.approachHeading = approachHeading;
+                this.survivorRelation = survivorRelation;
                 destination = waypoint.WaypointPosition;
             }
 
@@ -91,6 +96,40 @@ namespace AdvancedSar
                     return;
 
                 lastPickupProgress = GameTime.missionElapsedTime;
+            }
+        }
+
+        [HarmonyPatch(typeof(ObjectBase), "CheckForRaftPickUp")]
+        private static class SarPickupPatch
+        {
+            private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+            {
+                var raftList = AccessTools.Field(typeof(ObjectsManager), nameof(ObjectsManager._listOfAllRafts));
+                var filter = AccessTools.Method(typeof(SarPickupPatch), nameof(getPickupRafts));
+                foreach (var instruction in instructions)
+                {
+                    yield return instruction;
+                    if (instruction.LoadsField(raftList))
+                    {
+                        yield return new CodeInstruction(OpCodes.Ldarg_0);
+                        yield return new CodeInstruction(OpCodes.Call, filter);
+                    }
+                }
+            }
+
+            private static List<ObjectBase> getPickupRafts(List<ObjectBase> activeRafts, ObjectBase pickupUnit)
+            {
+                if (!(pickupUnit is Helicopter helicopter))
+                    return activeRafts;
+
+                var assignment = assignments.Find(current => current.helicopter == helicopter);
+                if (assignment == null)
+                    return activeRafts;
+
+                if (assignment.stage != SarStage.Hover || !hasActiveRaft(assignment, activeRafts))
+                    return noPickupRafts;
+
+                return new List<ObjectBase> { assignment.raft };
             }
         }
 
@@ -346,7 +385,8 @@ namespace AdvancedSar
                 return;
             }
 
-            if (!assignment.retried && findReachableSarTarget(helicopter, out _, retryRaft: assignment.raft) != null)
+            if (!assignment.retried &&
+                findReachableSarTarget(helicopter, assignment.survivorRelation, out _, retryRaft: assignment.raft) != null)
             {
                 assignment.retried = true;
                 assignment.directApproach = false;
@@ -370,7 +410,8 @@ namespace AdvancedSar
                 position._height >= assignment.destination._height - Utils.heightInFeetToUnity(altitudeToleranceFeet))
             {
                 if (hasActiveRaft(assignment, activeRafts) &&
-                    findReachableSarTarget(assignment.helicopter, out _, retryRaft: assignment.raft) != null)
+                    findReachableSarTarget(assignment.helicopter, assignment.survivorRelation, out _,
+                        retryRaft: assignment.raft) != null)
                     routeToRaft(assignment, assignment.raft, missionTime, justClearedShip: true);
                 else
                     continueSar(index, justClearedShip: true);

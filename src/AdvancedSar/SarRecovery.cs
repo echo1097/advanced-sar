@@ -21,6 +21,7 @@ namespace AdvancedSar
             internal Helicopter helicopter;
             internal ObjectBase home;
             internal FlightDeck deck;
+            internal RelationsState survivorRelation;
             internal HashSet<ObjectBase> skippedRafts;
             internal string recoveryId;
             internal string loadoutName;
@@ -129,6 +130,7 @@ namespace AdvancedSar
                 helicopter = helicopter,
                 home = home,
                 deck = home._obp._flightDeck,
+                survivorRelation = assignment.survivorRelation,
                 skippedRafts = assignment.skippedRafts
             });
             if (helicopter.CurrentOrder.Value?.OrderType != Order.Type.ReturnToBase)
@@ -210,7 +212,7 @@ namespace AdvancedSar
 
             var position = recovery.home.getGeoPosition();
             double budget = recovery.unlimitedFuel ? double.PositiveInfinity : range / recovery.fuelBurn;
-            return findSarTarget(position, position, recovery.home._taskforce, null, recovery.topSpeed,
+            return findSarTarget(position, position, recovery.home._taskforce, recovery.survivorRelation, null, recovery.topSpeed,
                 budget, recovery.skippedRafts, null, out _, extraDistanceNmi: 2 * departureWaypointNmi) != null;
         }
 
@@ -318,9 +320,9 @@ namespace AdvancedSar
                 return;
             }
 
-            var target = findReachableSarTarget(helicopter, out _, recovery.skippedRafts);
+            var target = findReachableSarTarget(helicopter, recovery.survivorRelation, out _, recovery.skippedRafts);
             if (target != null)
-                startSarFlight(helicopter, target, recovery.skippedRafts, afterTakeoff: true);
+                startSarFlight(helicopter, target, recovery.survivorRelation, recovery.skippedRafts, afterTakeoff: true);
             else
             {
                 helicopter.RemoveWaypoints();
