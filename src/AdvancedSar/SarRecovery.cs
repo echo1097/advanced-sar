@@ -667,15 +667,16 @@ namespace AdvancedSar
         {
             private static void Postfix(LaunchTaskParameters ltp, ObjectBase __result)
             {
-                if (ltp != null && __result is Helicopter helicopter && shipLaunches.TryGetValue(ltp, out var order))
-                    trackShipTakeoff(helicopter, order);
+                if (ltp != null && __result is Helicopter helicopter && shipLaunches.TryGetValue(ltp, out var launch))
+                    trackShipTakeoff(helicopter, launch.order);
             }
 
             private static bool Prefix(LaunchTaskParameters ltp, out Recovery __state, ref ObjectBase __result)
             {
                 __state = launchingRecovery;
                 launchingRecovery = null;
-                if (ltp != null && shipLaunches.TryGetValue(ltp, out var order) && !hasShipSarRaft(order.ship, order.side))
+                if (ltp != null && shipLaunches.TryGetValue(ltp, out var launch) &&
+                    !hasShipSarRaft(launch.order.ship, launch.order.side))
                 {
                     __result = null;
                     return false;

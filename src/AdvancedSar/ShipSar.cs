@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using SeaPower;
 
 namespace AdvancedSar
@@ -12,15 +11,22 @@ namespace AdvancedSar
             internal RelationsState side;
         }
 
-        private static ConditionalWeakTable<LaunchTaskParameters, ShipSarOrder> shipLaunches =
-            new ConditionalWeakTable<LaunchTaskParameters, ShipSarOrder>();
+        private sealed class ShipLaunch
+        {
+            internal ShipSarOrder order;
+            internal FlightDeck deck;
+            internal PendingLaunchTask pending;
+        }
+
+        private static readonly Dictionary<LaunchTaskParameters, ShipLaunch> shipLaunches =
+            new Dictionary<LaunchTaskParameters, ShipLaunch>();
         private static readonly Dictionary<CoolDownTask, ShipSarOrder> coolingHelicopters =
             new Dictionary<CoolDownTask, ShipSarOrder>();
 
         private static void clearShipOrders()
         {
             coolingHelicopters.Clear();
-            shipLaunches = new ConditionalWeakTable<LaunchTaskParameters, ShipSarOrder>();
+            shipLaunches.Clear();
         }
 
         private static bool hasShipSarRaft(ObjectBase ship, RelationsState side)
@@ -140,7 +146,7 @@ namespace AdvancedSar
             var vehicle = pending.VehicleType;
             var parameters = pending._ltp;
             if (vehicle?._type != VehicleType.Helicopter || pending.LaunchCount <= 0 || parameters == null ||
-                shipLaunches.TryGetValue(parameters, out _) || sarLaunches.ContainsKey(parameters))
+                shipLaunches.ContainsKey(parameters) || sarLaunches.ContainsKey(parameters))
                 return 0;
 
             var current = vehicle.Loadouts[pending._loadoutIndex];
@@ -152,7 +158,12 @@ namespace AdvancedSar
                 parameters._groundCargo.Count == 0 && parameters._waypoints.Count == 0 &&
                 string.IsNullOrEmpty(parameters._patrolZoneID))
             {
-                shipLaunches.Add(parameters, order);
+                shipLaunches.Add(parameters, new ShipLaunch
+                {
+                    order = order,
+                    deck = deck,
+                    pending = pending
+                });
                 pending.launchAllowed = true;
                 return pending.LaunchCount;
             }
@@ -222,11 +233,42 @@ namespace AdvancedSar
                 _loadoutIndex = vehicle.Loadouts.IndexOf(loadout),
                 _launchCount = 1
             };
-            if (deck.createLaunchTask(vehicle, loadout, squadron, squadron.Callsigns[0], parameters, true, float.NaN) == null)
+            var pending = deck.createLaunchTask(vehicle, loadout, squadron, squadron.Callsigns[0], parameters, true, float.NaN);
+            if (pending == null)
                 return false;
 
-            shipLaunches.Add(parameters, order);
+            shipLaunches.Add(parameters, new ShipLaunch
+            {
+                order = order,
+                deck = deck,
+                pending = pending
+            });
             return true;
+        }
+
+        internal static void updateShipLaunches()
+        {
+            if (shipLaunches.Count == 0)
+                return;
+
+            if (!ObjectsManager.InstanceExists(false))
+            {
+                shipLaunches.Clear();
+                return;
+            }
+
+            foreach (var item in shipLaunches)
+            {
+                var launch = item.Value;
+                if (isAvailableHome(launch.order.ship) && !launch.pending._isCancelled &&
+                    launch.pending.LaunchCount > 0 &&
+                    (launch.deck.FlightDeckTasks.Contains(launch.pending) ||
+                        launch.deck._flightDeckTasksToAdd.Contains(launch.pending)))
+                    continue;
+
+                shipLaunches.Remove(item.Key);
+                break;
+            }
         }
 
         internal static void updateCoolingHelicopters()

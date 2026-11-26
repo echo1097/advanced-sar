@@ -31,6 +31,7 @@ namespace AdvancedSar
             display?.refresh(Time.unscaledTime);
             SarOrders.updateRoutes(Time.unscaledTime);
             SarOrders.updateRecoveries(Time.unscaledTime);
+            SarOrders.updateShipLaunches();
             SarOrders.updateCoolingHelicopters();
         }
 
