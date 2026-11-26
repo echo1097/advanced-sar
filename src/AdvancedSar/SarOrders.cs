@@ -75,7 +75,7 @@ namespace AdvancedSar
                 if (failureMessage != null)
                     showUnableToComply(helicopter, failureMessage);
                 else
-                    helicopter.ShowOrderFeedback($"No unassigned {survivorSide(survivorRelation)} life rafts found", 5f);
+                    helicopter.ShowOrderFeedback($"No {survivorSide(survivorRelation)} life rafts need a helicopter", 5f);
 
                 return;
             }
@@ -129,6 +129,7 @@ namespace AdvancedSar
 
             var assignment = new Assignment(helicopter, target, waypoint, approachHeading, survivorRelation);
             assignment.skippedRafts = skippedRafts;
+            joinRaftQueue(assignment);
             assignments.Add(assignment);
             assignment.watchPickups();
             sarWaypoints.Add(waypoint, assignment);
@@ -207,6 +208,7 @@ namespace AdvancedSar
         internal static void clearAssignments()
         {
             clearShipOrders();
+            raftDepartures.Clear();
             for (int index = assignments.Count - 1; index >= 0; index--)
             {
                 if (hasUnchangedWaypoint(assignments[index]))
@@ -229,6 +231,7 @@ namespace AdvancedSar
                 return;
             }
 
+            leaveRaft(assignment);
             assignment.raft = null;
             var target = findReachableSarTarget(helicopter, assignment.survivorRelation, out string failureMessage,
                 assignment.skippedRafts);
@@ -246,6 +249,7 @@ namespace AdvancedSar
         {
             var helicopter = assignment.helicopter;
             assignment.raft = target;
+            joinRaftQueue(assignment);
             assignment.retried = false;
             var raftPosition = target.getGeoPosition();
             var origin = helicopter.getGeoPosition();
@@ -293,6 +297,7 @@ namespace AdvancedSar
         private static void releaseAssignment(int index)
         {
             var assignment = assignments[index];
+            leaveRaft(assignment);
             assignment.pickupSubscription.Dispose();
             restorePickupPermission(assignment);
             if (assignment.waypoint != null)
@@ -404,8 +409,10 @@ namespace AdvancedSar
                 return null;
 
             ObjectBase bestRaft = null;
+            bool bestShared = false;
             int fewestSurvivors = int.MaxValue;
             double bestDistance = double.PositiveInfinity;
+            var mine = helicopter == null ? null : assignments.Find(assignment => assignment.helicopter == helicopter);
 
             foreach (var raft in ObjectsManager.Instance._listOfAllRafts)
             {
@@ -413,11 +420,13 @@ namespace AdvancedSar
                     continue;
 
                 int survivors = getEligibleSurvivorCount(raft, taskforce, survivorRelation);
-                if (survivors <= 0 || survivors > fewestSurvivors)
+                if (survivors <= 0 || skippedRafts?.Contains(raft) == true)
                     continue;
 
-                if (skippedRafts?.Contains(raft) == true ||
-                    assignments.Exists(assignment => assignment.raft == raft && assignment.helicopter != helicopter))
+                int seatsComing = seatsAhead(raft, mine);
+                bool shared = seatsComing > 0;
+                survivors -= seatsComing;
+                if (survivors <= 0)
                     continue;
 
                 var raftPosition = raft.getGeoPosition();
@@ -433,9 +442,18 @@ namespace AdvancedSar
                     continue;
                 }
 
-                if (survivors < fewestSurvivors || distance < bestDistance)
+                bool better = bestRaft == null;
+                if (!better && shared != bestShared)
+                    better = !shared;
+                else if (!better && survivors != fewestSurvivors)
+                    better = survivors < fewestSurvivors;
+                else if (!better)
+                    better = distance < bestDistance;
+
+                if (better)
                 {
                     bestRaft = raft;
+                    bestShared = shared;
                     fewestSurvivors = survivors;
                     bestDistance = distance;
                 }
