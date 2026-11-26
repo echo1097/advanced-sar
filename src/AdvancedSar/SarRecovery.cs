@@ -183,10 +183,18 @@ namespace AdvancedSar
                 if (!recovery.awaitingLaunch)
                 {
                     var helicopter = recovery.helicopter;
-                    var order = helicopter != null ? helicopter.CurrentOrder.Value : null;
                     if (helicopter == null || helicopter.IsDestroyed || helicopter.IsDespawned)
+                    {
                         removeRecovery(index, false);
-                    else if (order != null && order.OrderType != Order.Type.None && order.OrderType != Order.Type.ReturnToBase)
+                        continue;
+                    }
+
+                    var order = helicopter.CurrentOrder.Value;
+                    bool redirected = order != null && order.OrderType != Order.Type.None &&
+                        order.OrderType != Order.Type.ReturnToBase;
+                    bool returnCanceled = (order == null || order.OrderType == Order.Type.None) &&
+                        !helicopter._isLanding && !hasActiveDeckTask(recovery.deck, helicopter);
+                    if (redirected || returnCanceled)
                     {
                         removeRecovery(index, false);
                         if (canReceiveSarOrders(helicopter))
@@ -229,6 +237,23 @@ namespace AdvancedSar
                 else if (entry.Available)
                     queueRecoveredHelicopter(index, entry);
             }
+        }
+
+        private static bool hasActiveDeckTask(FlightDeck deck, Helicopter helicopter)
+        {
+            foreach (var task in deck.FlightDeckTasks)
+            {
+                if (!task._isCancelled && task.Vehicle == helicopter && !deck._flightDeckTasksToRemove.Contains(task))
+                    return true;
+            }
+
+            foreach (var task in deck._flightDeckTasksToAdd)
+            {
+                if (!task._isCancelled && task.Vehicle == helicopter)
+                    return true;
+            }
+
+            return false;
         }
 
         private static AircraftRecoveryInventory.Entry findRecoveryEntry(Recovery recovery)
