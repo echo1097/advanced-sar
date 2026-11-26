@@ -9,7 +9,7 @@
 - Helicopters claim separate rafts for their selected side, prioritize rafts based on distance and survivor count, and check they have enough fuel to make the trip.
 - Helicopters descend, hover for pickup, and move on to another raft if they have room and fuel.
 - Helicopters return to where they launched from (ship, airfield, etc), unload survivors, and relaunch automatically if reachable rafts remain. 
-- Helicopters with enough fuel skip the usual servicing and launch prep.
+- When another raft is reachable on the fuel aboard and the deck is clear for departure, a healthy helicopter unloads at touchdown, keeps its rotors spinning, and takes off from the same spot. Helicopters that need servicing use the normal recovery sequence.
 
 ## Roadmap
 
