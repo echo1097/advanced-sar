@@ -2,6 +2,7 @@
 
 ## 0.6.1
 
+- Added Search & Rescue to the ship Orders menu. It sends the ship's airborne helicopters and launches the ones on deck.
 - Helicopters can now share a raft. When a raft has more survivors than one helicopter can seat, more helicopters join until there are enough free seats. The first to arrive picks up while the others hold nearby, then they take turns. Helicopters that are no longer needed move on to another raft.
 - Healthy SAR helicopters now keep their rotors spinning, and take off without the lengthy turnaround that the mod currently has (despite removing the rearm/refuel stage)
 - Added ability to preform SAR for enemy survivors. The helicopter keeps its selected survivor type when it relaunches.
