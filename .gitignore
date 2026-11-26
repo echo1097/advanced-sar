@@ -6,4 +6,7 @@
 /dist/
 devlog.md
 workshop/local.json
+workshop/publish.json
+release-workshop.cmd
+scripts/release/
 **/__pycache__/
