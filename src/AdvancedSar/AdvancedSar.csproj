@@ -7,6 +7,10 @@
     <BepInExCoreDir Condition="'$(BepInExCoreDir)' == '' And Exists('$(GameDir)/BepInEx/core/BepInEx.dll')">$(GameDir)/BepInEx/core</BepInExCoreDir>
     <BepInExCoreDir Condition="'$(BepInExCoreDir)' == ''">$(MSBuildProjectDirectory)/../../.tools/bepinex/BepInEx/core</BepInExCoreDir>
     <ModDir>$(MSBuildProjectDirectory)/../../dist/AdvancedSAR</ModDir>
+    <DevModDir Condition="'$(DevModDir)' == ''">$(GameDir)/Sea Power_Data/StreamingAssets/AdvancedSAR-DEV</DevModDir>
+    <DevModInfoFile>$(DevModDir)/_info.ini</DevModInfoFile>
+    <DevModExpectedName>Advanced Search &amp; Rescue (DEV)</DevModExpectedName>
+    <CopyToDevMod Condition="'$(CopyToDevMod)' == ''">true</CopyToDevMod>
   </PropertyGroup>
 
   <ItemGroup>
@@ -64,5 +68,36 @@
   <Target Name="StageMod" AfterTargets="Build">
     <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)/../../workshop/_info.ini;$(MSBuildProjectDirectory)/../../CHANGELOG.md"
           DestinationFolder="$(ModDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyToDevMod" AfterTargets="StageMod" Condition="'$(CopyToDevMod)' == 'true'">
+    <PropertyGroup>
+      <DevModFullPath>$([System.IO.Path]::GetFullPath('$(DevModDir)'))</DevModFullPath>
+      <IsWorkshopPath>$([System.Text.RegularExpressions.Regex]::IsMatch('$(DevModFullPath)', '(?i)[\\/]workshop[\\/]content[\\/]'))</IsWorkshopPath>
+    </PropertyGroup>
+
+    <Error Condition="'$(IsWorkshopPath)' == 'true'"
+           Text="Refusing to copy to '$(DevModFullPath)' because it looks like a Steam Workshop folder." />
+
+    <Error Condition="!Exists('$(DevModDir)')"
+           Text="Dev mod folder '$(DevModFullPath)' was not found. Create it or pass -p:CopyToDevMod=false." />
+
+    <Error Condition="!Exists('$(DevModInfoFile)')"
+           Text="Refusing to copy to '$(DevModFullPath)' because '_info.ini' was not found. Expected the dev install with Name=$(DevModExpectedName)." />
+
+    <PropertyGroup>
+      <DevModNamePattern>(?im)^\s*Name\s*=\s*$([System.Text.RegularExpressions.Regex]::Escape('$(DevModExpectedName)'))\s*$</DevModNamePattern>
+      <HasDevLanguageSection>$([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.File]::ReadAllText('$(DevModInfoFile)')), '(?im)^\s*\[Language_en\]\s*$'))</HasDevLanguageSection>
+      <IsVerifiedDevMod>$([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.File]::ReadAllText('$(DevModInfoFile)')), '$(DevModNamePattern)'))</IsVerifiedDevMod>
+    </PropertyGroup>
+
+    <Error Condition="'$(HasDevLanguageSection)' != 'true' Or '$(IsVerifiedDevMod)' != 'true'"
+           Text="Refusing to copy to '$(DevModFullPath)' because '_info.ini' did not match '[Language_en]' with 'Name=$(DevModExpectedName)'." />
+
+    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)/../../CHANGELOG.md"
+          DestinationFolder="$(DevModDir)"
+          SkipUnchangedFiles="true" />
+
+    <Message Importance="High" Text="Verified _info.ini and synced dev build to '$(DevModFullPath)'." />
   </Target>
 </Project>
