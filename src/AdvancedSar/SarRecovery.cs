@@ -25,6 +25,8 @@ namespace AdvancedSar
             internal RelationsState survivorRelation;
             internal HashSet<ObjectBase> skippedRafts;
             internal string recoveryId;
+            internal bool shipLaunch;
+            internal bool awaitingLaunch => shipLaunch || recoveryId != null;
             internal string loadoutName;
             internal int callsignIndex;
             internal int survivors;
@@ -177,7 +179,7 @@ namespace AdvancedSar
                     continue;
                 }
 
-                if (recovery.recoveryId == null)
+                if (!recovery.awaitingLaunch)
                 {
                     var helicopter = recovery.helicopter;
                     var order = helicopter != null ? helicopter.CurrentOrder.Value : null;
@@ -195,6 +197,12 @@ namespace AdvancedSar
                 if (recovery.helicopter != null)
                 {
                     resumeAfterTakeoff(index);
+                    continue;
+                }
+
+                if (recovery.shipLaunch)
+                {
+                    removeRecovery(index, false);
                     continue;
                 }
 
@@ -367,6 +375,15 @@ namespace AdvancedSar
             return false;
         }
 
+        private static void rememberLaunchWaypoints(Recovery recovery)
+        {
+            var helicopter = recovery.helicopter;
+            int count = helicopter.GetNumberOfWaypoints();
+            recovery.launchWaypoints = new List<LaunchWaypoint>(count);
+            for (int index = 1; index <= count; index++)
+                recovery.launchWaypoints.Add(new LaunchWaypoint(helicopter.GetWaypoint(index)));
+        }
+
         private static void forgetLaunch(Recovery recovery)
         {
             if (recovery.launchParameters != null)
@@ -443,7 +460,7 @@ namespace AdvancedSar
 
             var deck = task._flightDeck;
             int index = recoveries.FindIndex(item => item.helicopter == helicopter && item.deck == deck &&
-                item.recoveryId == null);
+                !item.awaitingLaunch);
             if (index < 0)
                 return false;
 
@@ -593,7 +610,7 @@ namespace AdvancedSar
                     !(task.Vehicle is Helicopter helicopter))
                     return;
 
-                var recovery = recoveries.Find(item => item.recoveryId == null &&
+                var recovery = recoveries.Find(item => !item.awaitingLaunch &&
                     item.helicopter == helicopter && item.deck == task._flightDeck);
                 if (recovery == null)
                     return;
@@ -645,10 +662,22 @@ namespace AdvancedSar
         [HarmonyPatch(typeof(FlightDeck), nameof(FlightDeck.launchVehicle))]
         private static class SarLaunchPatch
         {
+            private static void Postfix(LaunchTaskParameters ltp, ObjectBase __result)
+            {
+                if (ltp != null && __result is Helicopter helicopter && shipLaunches.TryGetValue(ltp, out var order))
+                    trackShipTakeoff(helicopter, order);
+            }
+
             private static bool Prefix(LaunchTaskParameters ltp, out Recovery __state, ref ObjectBase __result)
             {
                 __state = launchingRecovery;
                 launchingRecovery = null;
+                if (ltp != null && shipLaunches.TryGetValue(ltp, out var order) && !hasShipSarRaft(order.ship, order.side))
+                {
+                    __result = null;
+                    return false;
+                }
+
                 if (ltp == null || !sarLaunches.TryGetValue(ltp, out var recovery))
                     return true;
 
@@ -697,19 +726,13 @@ namespace AdvancedSar
             {
                 __state = null;
                 if (____flightDeckTask.Vehicle is Helicopter helicopter && !helicopter.HasWaypoints())
-                    __state = recoveries.Find(item => item.recoveryId != null && item.helicopter == helicopter);
+                    __state = recoveries.Find(item => item.awaitingLaunch && item.helicopter == helicopter);
             }
 
             private static void Postfix(Recovery __state)
             {
-                if (__state == null)
-                    return;
-
-                var helicopter = __state.helicopter;
-                int count = helicopter.GetNumberOfWaypoints();
-                __state.launchWaypoints = new List<LaunchWaypoint>(count);
-                for (int index = 1; index <= count; index++)
-                    __state.launchWaypoints.Add(new LaunchWaypoint(helicopter.GetWaypoint(index)));
+                if (__state != null)
+                    rememberLaunchWaypoints(__state);
             }
         }
 
@@ -718,7 +741,7 @@ namespace AdvancedSar
         {
             private static void Postfix(Helicopter ____helicopter)
             {
-                int index = recoveries.FindIndex(item => item.recoveryId != null && item.helicopter == ____helicopter);
+                int index = recoveries.FindIndex(item => item.awaitingLaunch && item.helicopter == ____helicopter);
                 if (index >= 0 && isAvailableHome(recoveries[index].home))
                     resumeAfterTakeoff(index);
             }

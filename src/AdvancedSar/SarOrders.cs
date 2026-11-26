@@ -23,8 +23,9 @@ namespace AdvancedSar
 
         private static void Postfix(ObjectBaseViewModel __instance, TrulyObservableCollection<ContextMenuItem> __result)
         {
-            if (!(__instance._objectBase is Helicopter helicopter) || helicopter == null ||
-                helicopter._taskforce == null || !helicopter.AcceptsOrdersFromPlayer)
+            var unit = __instance._objectBase;
+            if (unit == null || unit._taskforce == null || !unit.AcceptsOrdersFromPlayer ||
+                (!(unit is Helicopter) && !(unit is Vessel && isAvailableHome(unit))))
                 return;
 
             string ordersLabel = LanguageResourceHandler.Instance.getText("ContextMenu", "Orders", true, true);
@@ -36,14 +37,23 @@ namespace AdvancedSar
                 var sarItems = new TrulyObservableCollection<ContextMenuItem>
                 {
                     new ContextMenuItem("Begin SAR",
-                        command: new DelegateCommand(_ => beginSar(helicopter, RelationsState.Friendly))),
+                        command: new DelegateCommand(_ => beginUnitSar(unit, RelationsState.Friendly))),
                     new ContextMenuItem("Begin SAR for\nEnemy Survivors",
-                        command: new DelegateCommand(_ => beginSar(helicopter, RelationsState.Hostile))),
-                    new ContextMenuItem("Cancel SAR", command: new DelegateCommand(_ => cancelSar(helicopter)))
+                        command: new DelegateCommand(_ => beginUnitSar(unit, RelationsState.Hostile)))
                 };
+                if (unit is Helicopter helicopter)
+                    sarItems.Add(new ContextMenuItem("Cancel SAR", command: new DelegateCommand(_ => cancelSar(helicopter))));
                 menuItem.Items.Add(new ContextMenuItem("Search & Rescue", items: sarItems));
                 return;
             }
+        }
+
+        private static void beginUnitSar(ObjectBase unit, RelationsState survivorRelation)
+        {
+            if (unit is Helicopter helicopter)
+                beginSar(helicopter, survivorRelation);
+            else if (isAvailableHome(unit) && unit.AcceptsOrdersFromPlayer)
+                beginShipSar(unit, survivorRelation);
         }
 
         private static void beginSar(Helicopter helicopter, RelationsState survivorRelation)
@@ -196,6 +206,7 @@ namespace AdvancedSar
 
         internal static void clearAssignments()
         {
+            clearShipOrders();
             for (int index = assignments.Count - 1; index >= 0; index--)
             {
                 if (hasUnchangedWaypoint(assignments[index]))
